@@ -434,3 +434,76 @@ class TestRunForeground:
             github_url="https://github.com/example/bad",
         )
         assert process.run_foreground(entry) == 1
+
+
+class TestPidRangeValidation:
+    """A PID file must never hand a non-positive pid to os.kill.
+
+    ~/.appistry/pids/ is writable by any process running as the same user, so
+    the file's contents are not trusted input. `os.kill(-1, SIGTERM)` signals
+    *every* process the user can signal and `os.kill(0, ...)` signals Appistry's
+    own process group, so a `-1` or `0` in a PID file would turn the tray's
+    "Stop" item into a mass kill. Both values also make `os.kill(pid, 0)`
+    succeed, so `is_running()` would report True forever and never self-heal.
+    """
+
+    @pytest.fixture()
+    def pids_dir(self, tmp_path, monkeypatch):
+        pids = tmp_path / "pids"
+        pids.mkdir()
+        monkeypatch.setattr(process, "PIDS_DIR", pids)
+        monkeypatch.setattr(process, "APPISTRY_DIR", tmp_path)
+        monkeypatch.setattr(process, "SECRETS_DIR", tmp_path / "secrets")
+        return pids
+
+    @pytest.mark.parametrize("raw", ["-1", "0", "-99999", "-1:1234.5", "0:1234.5"])
+    def test_non_positive_pid_is_not_a_pid(self, pids_dir, raw):
+        (pids_dir / "widget.pid").write_text(raw, encoding="utf-8")
+
+        assert process._read_pid_record("widget") == (None, None)
+        assert process._read_pid("widget") is None
+
+    @pytest.mark.parametrize("raw", ["-1", "0"])
+    def test_non_positive_pid_reports_not_running(self, pids_dir, raw):
+        (pids_dir / "widget.pid").write_text(raw, encoding="utf-8")
+
+        assert process.is_running("widget") is False
+
+    @pytest.mark.parametrize("raw", ["-1", "0"])
+    def test_stop_refuses_and_signals_nothing(self, pids_dir, monkeypatch, raw):
+        (pids_dir / "widget.pid").write_text(raw, encoding="utf-8")
+        signalled = []
+        monkeypatch.setattr(process.os, "kill",
+                            lambda pid, sig: signalled.append((pid, sig)))
+
+        assert process.stop("widget") is False
+        assert signalled == [], "a non-positive pid was passed to os.kill"
+
+    def test_is_running_never_calls_kill_with_non_positive_pid(self, pids_dir, monkeypatch):
+        (pids_dir / "widget.pid").write_text("-1", encoding="utf-8")
+        calls = []
+        monkeypatch.setattr(process.os, "kill",
+                            lambda pid, sig: calls.append((pid, sig)))
+
+        process.is_running("widget")
+
+        assert calls == []
+
+    def test_positive_pid_still_works(self, pids_dir):
+        (pids_dir / "widget.pid").write_text("4242", encoding="utf-8")
+
+        assert process._read_pid_record("widget") == (4242, None)
+
+    def test_stop_still_signals_a_real_pid(self, pids_dir, monkeypatch):
+        (pids_dir / "widget.pid").write_text("4242", encoding="utf-8")
+        signalled = []
+
+        def fake_kill(pid, sig):
+            signalled.append((pid, sig))
+            if sig == 0:
+                raise ProcessLookupError
+
+        monkeypatch.setattr(process.os, "kill", fake_kill)
+
+        assert process.stop("widget") is True
+        assert (4242, process.signal.SIGTERM) in signalled

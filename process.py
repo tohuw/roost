@@ -199,7 +199,15 @@ def _read_pid(app_id: str) -> int | None:
 
 
 def _read_pid_record(app_id: str) -> tuple[int | None, float | None]:
-    """Return PID plus optional process creation time used to detect PID reuse."""
+    """Return PID plus optional process creation time used to detect PID reuse.
+
+    Only a real process id (> 0) is accepted. The non-positive values are not
+    merely useless, they are destructive: `os.kill(-1, SIGTERM)` signals *every*
+    process the user can signal and `os.kill(0, ...)` signals Appistry's own
+    process group, so a PID file containing `-1` or `0` would turn "Stop" into a
+    mass kill. Any same-user process can write into ~/.appistry/pids/, so this
+    file is not trusted input.
+    """
     path = _pid_path(app_id)
     if not path.exists():
         return None, None
@@ -207,9 +215,13 @@ def _read_pid_record(app_id: str) -> tuple[int | None, float | None]:
         raw = path.read_text(encoding="utf-8").strip()
         pid_text, separator, created_text = raw.partition(":")
         created_at = float(created_text) if separator else None
-        return int(pid_text), created_at
+        pid = int(pid_text)
     except (ValueError, OSError):
         return None, None
+    if pid <= 0:
+        log.warning("Ignoring non-positive PID in PID file for %s", app_id)
+        return None, None
+    return pid, created_at
 
 
 def _write_pid(app_id: str, pid: int) -> None:
@@ -335,7 +347,9 @@ def clear_launch_secret(app_id: str) -> None:
 def is_running(app_id: str) -> bool:
     """Return True if the process recorded for app_id is still alive."""
     pid, expected_created_at = _read_pid_record(app_id)
-    if pid is None:
+    # Defense in depth: _read_pid_record already filters these out, but every
+    # os.kill below is only safe for a positive pid, so re-assert it here.
+    if pid is None or pid <= 0:
         return False
     if _IS_WINDOWS:
         try:
@@ -535,7 +549,9 @@ def stop(app_id: str) -> bool:
     file. Returns True on success, False if no matching process was found.
     """
     pid, expected_created_at = _read_pid_record(app_id)
-    if pid is None:
+    # A non-positive pid must never reach os.kill: -1 broadcasts the signal to
+    # every process this user can signal, 0 hits our own process group.
+    if pid is None or pid <= 0:
         return False
 
     if _IS_WINDOWS:
