@@ -269,3 +269,110 @@ class TestRegistryIO:
         registry.save([e])
         loaded = registry.load()[0]
         assert loaded.github_url == ""
+
+
+# ── Control characters must not brick the registry (F-7) ─────────────────────
+
+class TestControlCharacterResilience:
+    """A control character in a display name used to emit invalid TOML.
+
+    Nothing then parsed the file, and because *every* entry point — tray
+    startup, the tray poll loop, and every CLI verb including `unregister` —
+    begins by loading the registry, the user was left with no in-app way to
+    recover. Escaping is a data-integrity fix, not an escalation fix: escaped
+    quotes already prevented forging a second `[[apps]]` block.
+    """
+
+    def test_newline_is_escaped(self):
+        assert _toml_str("two\nlines") == '"two\\nlines"'
+
+    def test_carriage_return_and_tab_are_escaped(self):
+        assert _toml_str("a\rb\tc") == '"a\\rb\\tc"'
+
+    def test_other_c0_controls_use_unicode_escapes(self):
+        assert _toml_str("bell\x07here") == '"bell\\u0007here"'
+        assert _toml_str("nul\x00here") == '"nul\\u0000here"'
+        assert _toml_str("del\x7fhere") == '"del\\u007Fhere"'
+
+    def test_backspace_and_formfeed_use_toml_shorthand(self):
+        assert _toml_str("a\bb\fc") == '"a\\bb\\fc"'
+
+    def test_newline_in_name_round_trips_through_save_and_load(self, tmp_registry):
+        registry.save([_entry(name="Evil\nName")])
+
+        loaded = registry.load()
+
+        assert len(loaded) == 1, "registry became unparseable"
+        assert loaded[0].name == "Evil\nName"
+
+    def test_control_characters_in_every_string_field_round_trip(self, tmp_registry):
+        registry.save([_entry(
+            name="N\name",
+            cwd="/tmp/c\twd",
+            command="run\r.sh",
+            github_url="https://github.com/o/r\x07",
+            icon="ic\non.png",
+        )])
+
+        loaded = registry.load()[0]
+
+        assert loaded.name == "N\name"
+        assert loaded.cwd == "/tmp/c\twd"
+        assert loaded.command == "run\r.sh"
+        assert loaded.github_url == "https://github.com/o/r\x07"
+        assert loaded.icon == "ic\non.png"
+
+    def test_corrupt_registry_loads_as_empty(self, tmp_registry):
+        registry.REGISTRY_PATH.write_text(
+            '[[apps]]\nname = "unterminated\n', encoding="utf-8"
+        )
+
+        assert registry.load() == []
+
+    def test_corrupt_registry_still_allows_recovery(self, tmp_registry):
+        """`appistry unregister` must stay usable — it calls load() first."""
+        registry.REGISTRY_PATH.write_text("this is not toml [[[", encoding="utf-8")
+
+        assert registry.remove("anything") is False
+        assert registry.get("anything") is None
+        registry.save([_entry()])
+        assert [e.id for e in registry.load()] == ["app-a"]
+
+    def test_registry_with_invalid_utf8_loads_as_empty(self, tmp_registry):
+        registry.REGISTRY_PATH.write_bytes(b'[[apps]]\nname = "\xff\xfe"\n')
+
+        assert registry.load() == []
+
+    def test_one_malformed_block_does_not_hide_valid_entries(self, tmp_registry):
+        registry.REGISTRY_PATH.write_text(
+            '[[apps]]\nid = "broken"\n\n'
+            '[[apps]]\nid = "good"\nname = "Good"\ncwd = "/tmp/g"\n'
+            'command = "run"\nport = 8100\n',
+            encoding="utf-8",
+        )
+
+        assert [e.id for e in registry.load()] == ["good"]
+
+
+# ── validate_name ─────────────────────────────────────────────────────────────
+
+class TestValidateName:
+    def test_ordinary_name_allowed(self):
+        assert registry.validate_name("My App") == "My App"
+
+    def test_non_ascii_name_allowed(self):
+        assert registry.validate_name("Café ✨") == "Café ✨"
+
+    @pytest.mark.parametrize("name", ["a\nb", "a\rb", "a\tb", "a\x00b", "a\x07b", "a\x7fb"])
+    def test_control_characters_rejected(self, name):
+        with pytest.raises(ValueError):
+            registry.validate_name(name)
+
+    @pytest.mark.parametrize("name", ["", "   ", None])
+    def test_empty_name_rejected(self, name):
+        with pytest.raises(ValueError):
+            registry.validate_name(name)
+
+    def test_absurdly_long_name_rejected(self):
+        with pytest.raises(ValueError):
+            registry.validate_name("x" * 201)

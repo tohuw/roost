@@ -29,6 +29,7 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
+import cleanup
 import hooks
 import launch
 import process
@@ -82,11 +83,19 @@ def _entry_for_cli(app_id: str) -> AppEntry | None:
     return entry
 
 def _get_github_url(cwd: str) -> str | None:
-    """Return the normalised GitHub HTTPS URL for the repo at cwd, or None."""
+    """Return the normalised GitHub HTTPS URL for the repo at cwd, or None.
+
+    `cwd` is caller-supplied and may be a repository Appistry did not create, so
+    the invocation is hardened the same way cleanup.py does it: git must not
+    honour command hooks (`core.fsmonitor`, `core.hooksPath`) found in that
+    repo's own config, must not read global/system config, and must never
+    prompt for credentials.
+    """
     try:
         result = subprocess.run(
-            ["git", "-C", cwd, "remote", "get-url", "origin"],
+            ["git", "-C", cwd, *cleanup._GIT_SAFE_FLAGS, "remote", "get-url", "origin"],
             capture_output=True, text=True, timeout=5,
+            env=cleanup._git_safe_env(),
         )
         if result.returncode != 0:
             return None
@@ -128,6 +137,25 @@ def cmd_register(args: argparse.Namespace) -> int:
     command = args.command or existing.command
     port    = args.port    if args.port is not None else existing.port
     icon    = args.icon    if args.icon is not None else (existing.icon if existing else None)
+
+    # Reject a name that cannot be persisted or displayed safely, at the
+    # boundary — a control character in a name breaks the registry file itself.
+    try:
+        name = registry.validate_name(name)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    # A project directory must be an absolute path and must not be the
+    # filesystem root: cwd anchors relative-executable containment checks and is
+    # the target of the git-aware cleanup that runs when an app is removed.
+    cwd_path = Path(cwd)
+    if not cwd_path.is_absolute():
+        print(f"Error: --cwd must be an absolute path: {cwd!r}", file=sys.stderr)
+        return 1
+    if cwd_path.parent == cwd_path:
+        print("Error: --cwd must not be the filesystem root", file=sys.stderr)
+        return 1
 
     # Require a GitHub remote — no remote, no registration
     github_url = _get_github_url(cwd)

@@ -1,5 +1,6 @@
 """Tests for appistry.py — pure/mockable logic."""
 
+import os
 import shlex
 import subprocess
 import sys
@@ -379,3 +380,127 @@ class TestAppBundlePath:
         bundle = appistry._app_bundle_path(entry)
         assert bundle.parent == appistry._APPLICATIONS_DIR.resolve()
         assert ".." not in str(bundle)
+
+
+class TestRegisterInputValidation:
+    """`name` and `cwd` must be rejected at the boundary, not silently accepted."""
+
+    def _args(self, **overrides):
+        defaults = dict(
+            name="Good App", cwd="/tmp/good", command="node server.js",
+            port=9999, icon=None, id="good-app",
+        )
+        defaults.update(overrides)
+        return type("Args", (), defaults)()
+
+    def _patch_common(self, monkeypatch):
+        monkeypatch.setattr(appistry.registry, "get", lambda app_id: None)
+        monkeypatch.setattr(appistry, "_get_github_url",
+                            lambda cwd: "https://github.com/example/good")
+        monkeypatch.setattr(appistry.registry, "upsert", lambda entry: None)
+        monkeypatch.setattr(appistry, "_build_registered_app", lambda entry: None)
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    def test_name_with_a_newline_is_rejected(self, monkeypatch, capsys):
+        """A control character in `name` used to emit unparseable TOML."""
+        self._patch_common(monkeypatch)
+
+        result = appistry.cmd_register(self._args(name="Evil\nName"))
+
+        assert result == 1
+        assert "control characters" in capsys.readouterr().err
+
+    def test_empty_name_is_rejected(self, monkeypatch, capsys):
+        self._patch_common(monkeypatch)
+
+        result = appistry.cmd_register(self._args(name="   ", id="ok-app"))
+
+        assert result == 1
+        assert "must not be empty" in capsys.readouterr().err
+
+    def test_filesystem_root_cwd_is_rejected(self, monkeypatch, capsys):
+        """`cwd` is the target of destructive cleanup; `/` is never right."""
+        self._patch_common(monkeypatch)
+
+        result = appistry.cmd_register(self._args(cwd="/"))
+
+        assert result == 1
+        assert "filesystem root" in capsys.readouterr().err
+
+    def test_relative_cwd_is_rejected(self, monkeypatch, capsys):
+        self._patch_common(monkeypatch)
+        # Bypass the resolve() that argument handling would normally apply.
+        monkeypatch.setattr(appistry.registry, "get",
+                            lambda app_id: appistry.AppEntry(
+                                id="good-app", name="Good App", cwd="relative/path",
+                                command="node server.js", port=9999,
+                                github_url="https://github.com/example/good",
+                            ))
+
+        result = appistry.cmd_register(self._args(cwd=None))
+
+        assert result == 1
+        assert "absolute path" in capsys.readouterr().err
+
+    def test_ordinary_name_and_cwd_are_accepted(self, monkeypatch, capsys, tmp_path):
+        self._patch_common(monkeypatch)
+
+        result = appistry.cmd_register(self._args(cwd=str(tmp_path)))
+
+        assert result == 0
+        assert "Registered: good-app" in capsys.readouterr().out
+
+
+class TestGithubUrlGitHardening:
+    """`cwd` may be a repo Appistry did not create, and git reads its config."""
+
+    def test_git_invocation_disables_config_command_hooks(self):
+        captured = {}
+
+        def fake_run(argv, **kwargs):
+            captured["argv"] = argv
+            captured["env"] = kwargs.get("env")
+            return _make_run("https://github.com/org/repo\n")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            _get_github_url("/proj")
+
+        argv = captured["argv"]
+        assert "core.fsmonitor=false" in argv
+        assert any(arg.startswith("core.hooksPath=") for arg in argv)
+
+        env = captured["env"]
+        assert env is not None
+        assert env["GIT_CONFIG_GLOBAL"] == os.devnull
+        assert env["GIT_CONFIG_SYSTEM"] == os.devnull
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+    def test_command_hook_in_a_real_repo_does_not_execute(self, tmp_path):
+        """End-to-end: `core.fsmonitor` must not fire during `remote get-url`."""
+        env = os.environ.copy()
+        env.update({
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+        })
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        if subprocess.run(["git", "--version"], capture_output=True).returncode != 0:
+            pytest.skip("git is unavailable")
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, env=env)
+        subprocess.run(
+            ["git", "-C", str(repo), "remote", "add", "origin",
+             "https://github.com/org/repo.git"],
+            check=True, env=env,
+        )
+        marker = tmp_path / "pwned"
+        hook = tmp_path / "fsmonitor.sh"
+        hook.write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n", encoding="utf-8")
+        hook.chmod(0o755)
+        subprocess.run(
+            ["git", "-C", str(repo), "config", "core.fsmonitor", str(hook)],
+            check=True, env=env,
+        )
+
+        _get_github_url(str(repo))
+
+        assert not marker.exists()

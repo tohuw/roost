@@ -7,12 +7,15 @@ helpers. TOML is written manually (no tomli-w dependency); stdlib tomllib
 (Python 3.11+) is used for reading.
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+
+log = logging.getLogger(__name__)
 
 APPISTRY_DIR = Path.home() / ".appistry"
 REGISTRY_PATH = APPISTRY_DIR / "registry.toml"
@@ -26,6 +29,21 @@ _APP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 # Display names are used verbatim as /Applications/{name}.app directory names.
 # Strip anything that isn't safe in a Finder-visible path component.
 _BUNDLE_SAFE_RE = re.compile(r"[^A-Za-z0-9 ._-]+")
+
+# Escapes TOML defines explicitly; every other C0 control gets \uXXXX.
+_TOML_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\b": "\\b",
+    "\t": "\\t",
+    "\n": "\\n",
+    "\f": "\\f",
+    "\r": "\\r",
+}
+
+# Control characters in a display name have no legitimate use and only serve to
+# break the files and UI surfaces the name is interpolated into.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -53,6 +71,21 @@ def validate_app_id(app_id: str) -> str:
     return app_id
 
 
+def validate_name(name: str) -> str:
+    """Return a display name if it is safe to persist, else raise ValueError.
+
+    Rejects at the boundary rather than silently rewriting, so a caller passing
+    a control character learns about it instead of getting a mangled name back.
+    """
+    if not (name or "").strip():
+        raise ValueError("App name must not be empty")
+    if _CONTROL_CHARS_RE.search(name):
+        raise ValueError("App name must not contain control characters")
+    if len(name) > 200:
+        raise ValueError("App name must be 200 characters or fewer")
+    return name
+
+
 def bundle_name_for(display_name: str, app_id: str) -> str:
     """Return a filesystem-safe name for /Applications/{name}.app.
 
@@ -69,9 +102,17 @@ def bundle_name_for(display_name: str, app_id: str) -> str:
 
 
 def _toml_str(value: str) -> str:
-    """Escape and quote a TOML string value."""
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    """Escape and quote a TOML basic string.
+
+    TOML forbids literal control characters inside a basic string, so escaping
+    only backslash and quote is not enough: a name containing a newline would
+    emit a file that no TOML parser can read, and since every code path (tray
+    poll, every CLI verb — `unregister` included) starts by loading the
+    registry, that would leave the user with no in-app way to recover.
+    """
+    out = [_TOML_ESCAPES.get(ch) or (ch if ch >= " " and ch != "\x7f" else f"\\u{ord(ch):04X}")
+           for ch in value]
+    return '"' + "".join(out) + '"'
 
 
 def _format_entry(entry: "AppEntry") -> str:
@@ -137,16 +178,35 @@ class AppEntry:
 # ── I/O ───────────────────────────────────────────────────────────────────────
 
 def load() -> list[AppEntry]:
-    """Load all entries from the registry. Returns an empty list if absent."""
+    """Load all entries from the registry. Returns an empty list if absent.
+
+    A malformed registry degrades to an empty list rather than raising. Every
+    entry point — tray startup, the tray poll loop, and every CLI verb — calls
+    this first, so an unparseable file must not be able to take the whole tool
+    down; in particular `appistry unregister` has to stay usable so the user can
+    recover without hand-editing TOML.
+    """
     if not REGISTRY_PATH.exists():
         return []
     try:
         import tomllib
     except ModuleNotFoundError:
         import tomli as tomllib  # type: ignore[no-redef]  # Python < 3.11 backport
-    with REGISTRY_PATH.open("rb") as fh:
-        data = tomllib.load(fh)
-    return [AppEntry.from_dict(a) for a in data.get("apps", [])]
+    try:
+        with REGISTRY_PATH.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError):
+        log.warning("Registry at %s is unreadable; treating it as empty",
+                    REGISTRY_PATH, exc_info=True)
+        return []
+    entries = []
+    for raw in data.get("apps", []):
+        try:
+            entries.append(AppEntry.from_dict(raw))
+        except (KeyError, TypeError, ValueError):
+            # One bad block must not hide every other registered app.
+            log.warning("Skipping malformed registry entry", exc_info=True)
+    return entries
 
 
 def save(entries: list[AppEntry]) -> None:
