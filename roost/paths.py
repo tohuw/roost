@@ -23,6 +23,30 @@ Note the asymmetry with the *ravens* directory: that one is a cross-project
 contract Huginn and Muninn also write to, so its name is fixed and not ours to
 change. This one is private to Roost and sits beside it.
 
+**There is deliberately no migration from ~/.appistry.** An earlier build of this
+project did write its state there, so the question is real, and the answer is to
+start clean:
+
+- The only files that build owned are an icon preference, a lock, a log, an
+  ephemeral port file, and a PID file. Every one is either derived state that is
+  rebuilt on the next launch or a single user preference that takes one command to
+  set again. There is nothing there worth the risk of moving.
+- The risk of moving is not symmetric with the benefit. ``~/.appistry`` also holds
+  the internal tool's ``registry.toml``, ``pids/``, and ``secrets/``, which are
+  live data for software in daily use. A migration is a delete-and-recreate on
+  paths inside another program's state directory, and one wrong filename there
+  corrupts a working tool to save a user from re-picking an icon.
+- Two of the filenames are genuinely ambiguous. Both projects wrote
+  ``menubar-http-port`` and ``menubar.log`` into that directory under the same
+  names, so given only a filesystem there is no way to tell whose a given file is.
+  A migration would have to either guess or leave them, and guessing is how the
+  bad outcome above happens.
+
+So nothing under ``~/.appistry`` is read, moved, or removed — not even the files
+this project once wrote. A user upgrading past the rename gets a default icon
+choice and, at worst, a few kilobytes of orphaned files they may delete by hand.
+That is documented in README.md under "Coexistence".
+
 The 0600-file / 0700-directory handling here is ported from the launcher's
 per-launch secret store, which is the only part of that store the status host
 still needs.

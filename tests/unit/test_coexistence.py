@@ -206,6 +206,68 @@ class TestStateDirectoryIsDisjoint:
         assert host.HOST_LOCK_NAME.lstrip(".") != APPISTRY_LOCK_NAME.lstrip(".")
 
 
+class TestNothingReachesIntoTheOtherProjectsState:
+    """No migration, and no reads either. See roost/paths.py for the reasoning.
+
+    An earlier build of this project did keep its state in ``~/.appistry``, so
+    "migrate it forward" is a real temptation. It is refused: the only things there
+    are an icon preference and derived state, while the directory also holds the
+    internal tool's live ``registry.toml``, ``pids/``, and ``secrets/``. Two of the
+    filenames (``menubar-http-port``, ``menubar.log``) were written by *both*
+    projects under the same name, so a migration would have to guess whose a file
+    is — and guessing wrong corrupts software in daily use.
+    """
+
+    def test_no_string_literal_names_the_other_projects_state(self):
+        """Checked over the AST's string constants, not the raw text.
+
+        Docstrings and comments in this package explain at length *why* it stays
+        out of ``~/.appistry``, so a substring scan of the source would flag the
+        documentation. What matters is that no **runtime string** names those
+        paths: a path this code could actually open has to appear as a literal
+        somewhere. Docstrings are excluded by walking the tree and skipping them
+        explicitly.
+        """
+        import ast
+
+        forbidden = (".appistry", "registry.toml", "shortcut-icons",
+                     "appistry_icon", "stable-hook-port")
+        package = Path(paths.__file__).parent
+        for module in sorted(package.glob("*.py")):
+            tree = ast.parse(module.read_text(encoding="utf-8"))
+            docstrings = {
+                node.body[0].value
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                     ast.AsyncFunctionDef))
+                and node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            }
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and node not in docstrings
+                ):
+                    for name in forbidden:
+                        assert name not in node.value, (
+                            f"{module.name}:{node.lineno} has a runtime string "
+                            f"naming {name!r}. Nothing here may read, move, or "
+                            "remove anything under ~/.appistry."
+                        )
+
+    def test_no_migration_helper_exists(self):
+        """A migration is the one way this project could damage the other."""
+        package = Path(paths.__file__).parent
+        for module in sorted(package.glob("*.py")):
+            source = module.read_text(encoding="utf-8").lower()
+            for forbidden in ("def migrate", "def _migrate", "shutil.move",
+                              "os.rename("):
+                assert forbidden not in source, f"{module.name}: {forbidden}"
+
+
 class TestProcessAndOsIdentifiers:
     def test_the_launchd_label_differs(self):
         assert cli.LABEL != APPISTRY_LAUNCHD_LABEL
