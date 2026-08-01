@@ -2,13 +2,13 @@
 
 Two invariants govern this module.
 
-**Per-raven token isolation.** Each raven keeps its own loopback token. Appistry
+**Per-raven token isolation.** Each raven keeps its own loopback token. Roost
 reads a token from the ``token_path`` in *that raven's own descriptor* and sends
 it only to *that raven's own port*, under the header name that raven asked for.
 It never caches a token across ravens, never sends one raven's credential to
 another, and never mints a credential on a raven's behalf. A raven with no
 ``token_path`` gets an unauthenticated request — whether to accept that is the
-raven's decision, not Appistry's, and the failure surfaces as an ordinary HTTP
+raven's decision, not Roost's, and the failure surfaces as an ordinary HTTP
 error with a visible reason.
 
 **Every call is bounded.** A raven is another process that can hang, and this
@@ -32,9 +32,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-import ravens
-import sanitize
-from ravens import RavenDescriptor
+from roost import ravens
+from roost import sanitize
+from roost.ravens import RavenDescriptor
 
 log = logging.getLogger(__name__)
 
@@ -173,7 +173,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Refuse to follow redirects.
 
     A raven that answers a menu fetch with a redirect is misbehaving, and
-    following it would let the descriptor's own port send Appistry — and the
+    following it would let the descriptor's own port send Roost — and the
     token it just attached — to an origin the descriptor never declared.
     """
 
@@ -252,7 +252,7 @@ def send_action(
 ) -> dict:
     """Forward an action id back to the raven that published it.
 
-    Appistry does not interpret ``action_id``. It came from this raven's menu and
+    Roost does not interpret ``action_id``. It came from this raven's menu and
     it goes back to this raven, unchanged, with this raven's own token — which is
     the whole of the host's involvement in what the action means.
     """

@@ -14,16 +14,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import icons
-import paths
+from roost import icons
+from roost import paths
 
-REPO = Path(__file__).resolve().parents[2]
+#: The assets ship inside the package, not at the repository root.
+ASSETS = Path(__file__).resolve().parents[2] / "roost" / "assets"
 
 
 @pytest.fixture
 def config(monkeypatch, tmp_path):
-    """Point the icon config at a temp dir so tests never touch ~/.appistry."""
-    monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path)
+    """Point the icon config at a temp dir so tests never touch Roost's real state."""
+    monkeypatch.setattr(paths, "STATE_DIR", tmp_path)
     return tmp_path
 
 
@@ -32,7 +33,7 @@ def assets(monkeypatch, tmp_path):
     """A synthetic asset directory with both variants of two icons."""
     directory = tmp_path / "assets"
     directory.mkdir()
-    for name in ("raven", "appistry"):
+    for name in ("raven", "roost"):
         for suffix in ("", "@2x"):
             (directory / f"{name}{suffix}.png").write_bytes(b"colour")
             (directory / f"{name}-template{suffix}.png").write_bytes(b"mono")
@@ -49,11 +50,11 @@ class TestShippedAssets:
         "raven.svg",
         "raven.png", "raven@2x.png",
         "raven-template.png", "raven-template@2x.png",
-        "appistry.png", "appistry-template.png",
+        "roost.png", "roost-template.png",
         "CREDITS.md",
     ])
     def test_asset_is_present(self, name):
-        assert (REPO / "assets" / name).is_file(), name
+        assert (ASSETS / name).is_file(), name
 
     def test_the_raven_default_resolves_without_a_config(self):
         choice = icons.resolve_builtin(icons.DEFAULT_ICON)
@@ -62,13 +63,13 @@ class TestShippedAssets:
 
     def test_attribution_is_shipped_with_the_art(self):
         """CC BY 3.0 requires credit; this is a licence obligation, not a nicety."""
-        credits = (REPO / "assets" / "CREDITS.md").read_text(encoding="utf-8")
+        credits = (ASSETS / "CREDITS.md").read_text(encoding="utf-8")
         assert "Lorc" in credits
         assert "game-icons.net" in credits
         assert "CC BY 3.0" in credits
 
     def test_the_svg_keeps_its_inline_attribution(self):
-        svg = (REPO / "assets" / "raven.svg").read_text(encoding="utf-8")
+        svg = (ASSETS / "raven.svg").read_text(encoding="utf-8")
         assert "Lorc" in svg
         assert "CC BY 3.0" in svg
 
@@ -78,7 +79,7 @@ class TestShippedAssets:
 class TestBuiltinResolution:
     def test_names_are_discovered_with_the_default_first(self, assets):
         assert icons.builtin_names()[0] == icons.DEFAULT_ICON
-        assert set(icons.builtin_names()) == {"raven", "appistry"}
+        assert set(icons.builtin_names()) == {"raven", "roost"}
 
     def test_template_variants_are_not_listed_as_icons(self, assets):
         """"raven-template@2x.png" must reduce to "raven", not to a third icon."""
@@ -188,16 +189,16 @@ class TestConfig:
         assert icons.configured_icon() == ""
 
     def test_round_trip(self, config):
-        icons.set_icon("appistry")
-        assert icons.configured_icon() == "appistry"
+        icons.set_icon("roost")
+        assert icons.configured_icon() == "roost"
 
     def test_overwrite(self, config):
-        icons.set_icon("appistry")
+        icons.set_icon("roost")
         icons.set_icon("raven")
         assert icons.configured_icon() == "raven"
 
     def test_clear_reverts_to_no_setting(self, config):
-        icons.set_icon("appistry")
+        icons.set_icon("roost")
         icons.clear_icon()
         assert icons.configured_icon() == ""
 
@@ -248,8 +249,8 @@ class TestResolve:
         assert icons.resolve().name == "raven"
 
     def test_configured_builtin_wins(self, config, assets):
-        icons.set_icon("appistry")
-        assert icons.resolve().name == "appistry"
+        icons.set_icon("roost")
+        assert icons.resolve().name == "roost"
 
     def test_configured_user_icon_wins(self, config, tmp_path, assets):
         target = tmp_path / "mine.png"
@@ -273,7 +274,7 @@ class TestResolve:
 
     def test_an_explicit_value_overrides_the_config(self, config, assets):
         icons.set_icon("raven")
-        assert icons.resolve("appistry").name == "appistry"
+        assert icons.resolve("roost").name == "roost"
 
     def test_no_assets_at_all_resolves_to_none(self, config, monkeypatch, tmp_path):
         monkeypatch.setattr(icons, "ASSETS_DIR", tmp_path / "absent")
@@ -282,7 +283,7 @@ class TestResolve:
 
 class TestChoices:
     def test_builtins_are_offered_with_the_default_first(self, config, assets):
-        assert [choice.name for choice in icons.choices()] == ["raven", "appistry"]
+        assert [choice.name for choice in icons.choices()] == ["raven", "roost"]
 
     def test_a_configured_user_icon_joins_the_list(self, config, tmp_path, assets):
         target = tmp_path / "mine.png"
@@ -292,18 +293,18 @@ class TestChoices:
         assert "mine.png" in labels
 
     def test_a_configured_builtin_is_not_duplicated(self, config, assets):
-        icons.set_icon("appistry")
+        icons.set_icon("roost")
         names = [choice.name for choice in icons.choices()]
-        assert names.count("appistry") == 1
+        assert names.count("roost") == 1
 
     def test_the_active_choice_is_identifiable(self, config, assets):
-        icons.set_icon("appistry")
+        icons.set_icon("roost")
         active = icons.resolve()
         marked = [
             choice.name for choice in icons.choices()
             if icons.is_active(choice, active)
         ]
-        assert marked == ["appistry"]
+        assert marked == ["roost"]
 
     def test_is_active_handles_no_active_icon(self, assets):
         choice = icons.resolve_builtin("raven")

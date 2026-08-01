@@ -2,7 +2,7 @@
 
 A *raven* is a long-running local daemon that reports status into one shared
 desktop menu. Each raven self-publishes a small JSON **descriptor** into a
-well-known directory; Appistry reads those files and renders what it finds. There
+well-known directory; Roost reads those files and renders what it finds. There
 is no central registry the ravens write through, so a raven that is not running
 simply has no descriptor, and no raven can corrupt another's entry.
 
@@ -15,7 +15,7 @@ that fails any check yields an :class:`UnavailableRaven` carrying a
 human-readable reason — never an exception that reaches the menu loop, and never
 a partially-populated descriptor that later code has to re-validate.
 
-**Version compatibility is a range, not an equality.** Appistry advertises the
+**Version compatibility is a range, not an equality.** Roost advertises the
 inclusive window ``MIN_API_VERSION..API_VERSION`` and accepts any raven whose own
 declared window overlaps it. An exact ``!=`` comparison is the bug behind
 huginn issue #38: a routine version bump silently disabled every participant,
@@ -35,17 +35,17 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import sanitize
+from roost import sanitize
 
 _IS_WINDOWS = sys.platform == "win32"
 log = logging.getLogger(__name__)
 
 # ── Protocol version ──────────────────────────────────────────────────────────
 
-#: The raven protocol version Appistry implements.
+#: The raven protocol version Roost implements.
 API_VERSION = 1
 
-#: The oldest protocol version Appistry still speaks. Appistry advertises the
+#: The oldest protocol version Roost still speaks. Roost advertises the
 #: inclusive range MIN_API_VERSION..API_VERSION and accepts any raven whose own
 #: declared range overlaps it (huginn issue #38 — exact match silently disabled
 #: every participant on a bump). Widening support is a one-line change here; a
@@ -64,7 +64,7 @@ MAX_DECLARABLE_API = API_VERSION + 100
 #: descriptor, and reading it into memory before deciding that would be the bug.
 MAX_DESCRIPTOR_BYTES = 16 * 1024
 
-#: Longest ``token_path`` contents Appistry will read. A loopback token is tens
+#: Longest ``token_path`` contents Roost will read. A loopback token is tens
 #: of bytes; this only exists so a descriptor cannot aim the host at a huge file.
 MAX_TOKEN_BYTES = 4096
 
@@ -168,7 +168,7 @@ class RavenDescriptor:
 
 @dataclass(frozen=True)
 class UnavailableRaven:
-    """A raven Appistry knows about but cannot use, and why.
+    """A raven Roost knows about but cannot use, and why.
 
     This is a first-class result, not an error path. An unreachable, stale, or
     malformed raven must render as a disabled section with a visible reason —
@@ -280,8 +280,8 @@ def _validate_token_path(raw: object, name: str) -> Path | None:
 
     The path is only checked for *shape* here; whether a token can actually be
     read is decided at request time, because a raven may rotate its token at any
-    moment. Appistry never mints a credential on a raven's behalf, so a missing
-    token file is the raven's problem to report, not Appistry's to paper over.
+    moment. Roost never mints a credential on a raven's behalf, so a missing
+    token file is the raven's problem to report, not Roost's to paper over.
     """
     if raw is None:
         return None
@@ -556,7 +556,7 @@ def discover(directory: Path | None = None) -> list[Raven]:
 
     Ordering is by descending ``host_priority``, then by name, so the menu is
     stable across polls and the raven that declares itself primary leads. That
-    ordering is data the ravens supply — Appistry does not know which raven
+    ordering is data the ravens supply — Roost does not know which raven
     "should" be first, and hardcoding one would be the same mistake as a
     hardcoded catalog id.
 
@@ -593,7 +593,7 @@ class DescriptorDocument:
 
     Ravens are welcome to write the JSON themselves — the schema is the contract,
     not this class. It exists so the reference implementations in ``examples/``
-    and Appistry's own tests cannot drift from the parser.
+    and Roost's own tests cannot drift from the parser.
     """
 
     name: str

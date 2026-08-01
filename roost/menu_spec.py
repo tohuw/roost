@@ -1,6 +1,6 @@
-"""Menu-as-data: the declarative menu spec Appistry fetches and renders.
+"""Menu-as-data: the declarative menu spec Roost fetches and renders.
 
-Appistry renders a raven's menu **without interpreting it**. It draws labels and
+Roost renders a raven's menu **without interpreting it**. It draws labels and
 forwards action ids back to the raven that published them. It does not know what
 ``focus-session`` means, it does not special-case any raven's id, and it never
 decides what a raven's menu should contain. That rule is what lets a companion
@@ -33,8 +33,8 @@ Unknown fields are dropped rather than rejected: a newer raven inside the
 compatible version range must be able to add a field without disabling itself
 here — the same failure mode huginn issue #38 describes, one layer up.
 
-An item carries either an ``id`` (Appistry POSTs it back to the raven's ``action``
-endpoint) or a ``url`` (Appistry opens ``http://127.0.0.1:{port}{url}`` in the
+An item carries either an ``id`` (Roost POSTs it back to the raven's ``action``
+endpoint) or a ``url`` (Roost opens ``http://127.0.0.1:{port}{url}`` in the
 browser). An item with neither is inert and renders disabled: a menu entry that
 looks clickable and does nothing is worse than one that admits it.
 """
@@ -44,8 +44,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-import ravens
-import sanitize
+from roost import ravens
+from roost import sanitize
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ MAX_DETAIL_LENGTH = 80
 MAX_ACTION_ID_LENGTH = 128
 MAX_URL_LENGTH = 512
 
-#: Styles a raven may request. Appistry maps these to its own presentation; a
+#: Styles a raven may request. Roost maps these to its own presentation; a
 #: raven cannot supply arbitrary styling, because that would be interpretation of
 #: raven data by another name.
 STYLES = ("normal", "attention", "muted")
@@ -124,9 +124,9 @@ def _coerce_badge(raw: object) -> int:
 
 
 def _parse_action_id(raw: object) -> str:
-    """Return an action id Appistry is willing to send back to the raven.
+    """Return an action id Roost is willing to send back to the raven.
 
-    The id is opaque to Appistry — it means whatever the raven says it means —
+    The id is opaque to Roost — it means whatever the raven says it means —
     but it is still put on the wire, so it must not carry control characters or
     exceed a sane length. A rejected id makes the item inert rather than
     dropping the row, so the user sees that something is there and broken.
@@ -147,7 +147,7 @@ def _parse_url(raw: object) -> str:
     own loopback origin, so a scheme or an authority would send the user's
     browser somewhere the raven does not control. Query strings are permitted
     here (unlike in the descriptor) because a menu link legitimately carries
-    parameters; a fragment is not, since Appistry appends nothing after it.
+    parameters; a fragment is not, since Roost appends nothing after it.
     """
     if not isinstance(raw, str) or not raw:
         return ""
@@ -199,7 +199,7 @@ def parse_section(raw: object, budget: int) -> tuple[MenuSection | None, int]:
     """Parse one section, consuming at most ``budget`` items.
 
     Returns the section and the remaining budget. The budget is threaded through
-    rather than checked afterwards so a hostile payload cannot make Appistry
+    rather than checked afterwards so a hostile payload cannot make Roost
     build a huge structure and only then discard it.
     """
     if not isinstance(raw, dict) or budget <= 0:

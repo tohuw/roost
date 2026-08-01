@@ -4,10 +4,10 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-~/.appistry/
 .DS_Store
-# The host lock lives under ~/.appistry, not here — this only catches one left
-# behind by an older build that kept it in the working tree.
+# The host lock lives in Roost's own state directory (see roost/paths.py), not
+# here — this only catches one left behind by an older build that kept it in the
+# working tree.
 *.lock
 .pytest_cache/
 .ruff_cache/

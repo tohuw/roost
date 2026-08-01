@@ -21,11 +21,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import host
-import menu_spec
-import raven_client
-import ravens
-import sanitize
+from roost import host
+from roost import menu_spec
+from roost import raven_client
+from roost import ravens
+from roost import sanitize
 
 _POLL_INTERVAL = 0.01
 
@@ -108,7 +108,7 @@ def _menu(title, *labels, badge=0):
 
 class TestHostLock:
     def test_first_acquirer_becomes_the_host(self, tmp_path):
-        lock = host.HostLock(tmp_path / "menubar.lock")
+        lock = host.HostLock(tmp_path / host.HOST_LOCK_NAME)
         try:
             assert lock.acquire() is True
             assert lock.held is True
@@ -116,7 +116,7 @@ class TestHostLock:
             lock.release()
 
     def test_second_acquirer_is_refused(self, tmp_path):
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         first, second = host.HostLock(path), host.HostLock(path)
         try:
             assert first.acquire() is True
@@ -127,7 +127,7 @@ class TestHostLock:
             second.release()
 
     def test_release_hands_the_host_role_over(self, tmp_path):
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         first, second = host.HostLock(path), host.HostLock(path)
         try:
             assert first.acquire() is True
@@ -138,7 +138,7 @@ class TestHostLock:
             second.release()
 
     def test_reacquire_is_idempotent(self, tmp_path):
-        lock = host.HostLock(tmp_path / "menubar.lock")
+        lock = host.HostLock(tmp_path / host.HOST_LOCK_NAME)
         try:
             assert lock.acquire() is True
             assert lock.acquire() is True
@@ -146,10 +146,10 @@ class TestHostLock:
             lock.release()
 
     def test_release_is_safe_when_never_acquired(self, tmp_path):
-        host.HostLock(tmp_path / "menubar.lock").release()
+        host.HostLock(tmp_path / host.HOST_LOCK_NAME).release()
 
     def test_the_lock_records_the_hosting_pid(self, tmp_path):
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         lock = host.HostLock(path)
         try:
             lock.acquire()
@@ -158,7 +158,7 @@ class TestHostLock:
             lock.release()
 
     def test_holder_pid_reports_a_live_host(self, tmp_path):
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         lock = host.HostLock(path)
         try:
             lock.acquire()
@@ -168,14 +168,14 @@ class TestHostLock:
 
     def test_holder_pid_ignores_a_dead_pid(self, tmp_path, monkeypatch):
         """A stale recorded pid must not be reported as a live host."""
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         path.write_text("999999", encoding="utf-8")
         monkeypatch.setattr(ravens, "pid_is_alive", lambda *_a, **_k: False)
         assert host.holder_pid(path) is None
 
     @pytest.mark.parametrize("content", ["", "not-a-pid", "-1", "0"])
     def test_holder_pid_ignores_junk(self, tmp_path, content):
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         path.write_text(content, encoding="utf-8")
         assert host.holder_pid(path) is None
 
@@ -183,13 +183,13 @@ class TestHostLock:
         assert host.holder_pid(tmp_path / "absent.lock") is None
 
     def test_context_manager_releases(self, tmp_path):
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         with host.HostLock(path) as acquired:
             assert acquired is True
         assert host.HostLock(path).acquire() is True
 
-    def test_lock_path_lives_under_the_appistry_dir(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(host.paths, "APPISTRY_DIR", tmp_path)
+    def test_lock_path_lives_under_the_state_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(host.paths, "STATE_DIR", tmp_path)
         assert host.host_lock_path() == tmp_path / host.HOST_LOCK_NAME
 
     def test_lock_path_is_not_inside_the_install_tree(self, monkeypatch, tmp_path):
@@ -199,7 +199,7 @@ class TestHostLock:
         or shared install, and a mode that lets other local users read it
         publishes the host's PID.
         """
-        monkeypatch.setattr(host.paths, "APPISTRY_DIR", tmp_path)
+        monkeypatch.setattr(host.paths, "STATE_DIR", tmp_path)
         repo = Path(host.__file__).resolve().parent
         assert repo not in host.host_lock_path().resolve().parents
 
@@ -207,7 +207,7 @@ class TestHostLock:
 @_POSIX_ONLY
 class TestHostLockPermissions:
     def test_the_lock_file_is_owner_only(self, tmp_path):
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         lock = host.HostLock(path)
         try:
             assert lock.acquire() is True
@@ -217,7 +217,7 @@ class TestHostLockPermissions:
 
     def test_a_preexisting_world_readable_lock_is_re_restricted(self, tmp_path):
         """An older build created this file 0644; reopening keeps the old mode."""
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         path.write_text("1", encoding="utf-8")
         path.chmod(0o644)
         lock = host.HostLock(path)
@@ -230,7 +230,7 @@ class TestHostLockPermissions:
     def test_the_lock_mode_is_not_left_to_umask(self, tmp_path):
         previous = os.umask(0o000)
         try:
-            path = tmp_path / "menubar.lock"
+            path = tmp_path / host.HOST_LOCK_NAME
             lock = host.HostLock(path)
             try:
                 assert lock.acquire() is True
@@ -254,7 +254,7 @@ class TestHostLockOnAnUnwritablePath:
         blocker = tmp_path / "state"
         blocker.write_text("not a directory", encoding="utf-8")
 
-        lock = host.HostLock(blocker / "menubar.lock")
+        lock = host.HostLock(blocker / host.HOST_LOCK_NAME)
 
         assert lock.acquire() is False
         assert lock.failure == host.UNWRITABLE
@@ -263,7 +263,7 @@ class TestHostLockOnAnUnwritablePath:
 
     def test_an_unopenable_lock_path_does_not_raise(self, tmp_path):
         """The lock path exists but cannot be opened for writing."""
-        occupied = tmp_path / "menubar.lock"
+        occupied = tmp_path / host.HOST_LOCK_NAME
         occupied.mkdir()  # os.open(dir, O_RDWR) raises IsADirectoryError
 
         lock = host.HostLock(occupied)
@@ -282,7 +282,7 @@ class TestHostLockOnAnUnwritablePath:
         install.mkdir()
         install.chmod(0o500)
         state = tmp_path / "state"
-        monkeypatch.setattr(host.paths, "APPISTRY_DIR", state)
+        monkeypatch.setattr(host.paths, "STATE_DIR", state)
         try:
             lock = host.HostLock()
             try:
@@ -294,7 +294,7 @@ class TestHostLockOnAnUnwritablePath:
             install.chmod(0o700)
 
     def test_contention_is_distinguished_from_unwritability(self, tmp_path):
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         first, second = host.HostLock(path), host.HostLock(path)
         try:
             assert first.acquire() is True
@@ -305,7 +305,7 @@ class TestHostLockOnAnUnwritablePath:
             second.release()
 
     def test_a_failed_acquire_clears_a_previous_reason(self, tmp_path):
-        path = tmp_path / "menubar.lock"
+        path = tmp_path / host.HOST_LOCK_NAME
         lock = host.HostLock(path)
         lock.failure = host.UNWRITABLE
         lock.reason = "stale"
@@ -490,7 +490,7 @@ class TestMenuModel:
             second.close()
 
     def test_host_priority_orders_the_menu(self, tmp_path):
-        """Order is raven-declared data; Appistry knows neither name."""
+        """Order is raven-declared data; Roost knows neither name."""
         low = _MenuRaven(_menu("Muninn", "Row"))
         high = _MenuRaven(_menu("Huginn", "Row"))
         try:

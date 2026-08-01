@@ -60,19 +60,19 @@ fake_rumps.timer = lambda _seconds: (lambda function: function)
 fake_rumps.quit_application = lambda: None
 sys.modules.setdefault("rumps", fake_rumps)
 
-import host
-import icons
-import menu_spec
-import menubar
-import ravens
-import tray
-from tray import RowKind
+from roost import host
+from roost import icons
+from roost import menu_spec
+from roost import menubar
+from roost import ravens
+from roost import tray
+from roost.tray import RowKind
 
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
-    monkeypatch.setattr(icons.paths, "APPISTRY_DIR", tmp_path)
-    monkeypatch.setattr(menubar.paths, "APPISTRY_DIR", tmp_path)
+    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(menubar.paths, "STATE_DIR", tmp_path)
     return tmp_path
 
 
@@ -99,7 +99,7 @@ def _live_menu(name="huginn", *labels, badge=0):
 
 def _app(model=None):
     """Build the tray without running an AppKit loop."""
-    app = menubar.AppistryApp.__new__(menubar.AppistryApp)
+    app = menubar.RoostApp.__new__(menubar.RoostApp)
     app.menu = _FakeMenu()
     app.icon = None
     app.template = None
@@ -146,11 +146,11 @@ class TestRendering:
                        children=(
                            tray.Row(RowKind.HOST, label="Raven", action="icon:raven",
                                     enabled=True, checked=True),
-                           tray.Row(RowKind.HOST, label="Appistry",
-                                    action="icon:appistry", enabled=True),
+                           tray.Row(RowKind.HOST, label="Roost",
+                                    action="icon:roost", enabled=True),
                        ))
         item = _app()._render(row)
-        assert [child.title for child in item.children] == ["Raven", "Appistry"]
+        assert [child.title for child in item.children] == ["Raven", "Roost"]
         assert [child.state for child in item.children] == [1, 0]
 
     def test_the_whole_menu_is_built_from_the_shared_rows(self, monkeypatch):
@@ -310,7 +310,7 @@ class TestNotify:
             menubar.subprocess, "run",
             lambda argv, **_k: captured.setdefault("argv", argv),
         )
-        menubar.notify("Appistry", 'evil" & (do shell script "id") & "')
+        menubar.notify("Roost", 'evil" & (do shell script "id") & "')
         script = captured["argv"][-1]
         # Every quote from the message survives only in escaped form, so the
         # payload stays inside the one string literal notify opened.
@@ -325,7 +325,7 @@ class TestNotify:
             menubar.subprocess, "run",
             lambda argv, **_k: captured.setdefault("argv", argv),
         )
-        menubar.notify("Appistry", 'ends with a backslash\\')
+        menubar.notify("Roost", 'ends with a backslash\\')
         script = captured["argv"][-1]
         assert script.endswith('"')
         assert "\\\\" in script
@@ -336,7 +336,7 @@ class TestNotify:
             menubar.subprocess, "run",
             lambda argv, **_k: captured.setdefault("argv", argv),
         )
-        menubar.notify("Appistry", "line\x1b[31mone\nline two")
+        menubar.notify("Roost", "line\x1b[31mone\nline two")
         script = captured["argv"][-1]
         assert "\x1b" not in script
         assert "\n" not in script

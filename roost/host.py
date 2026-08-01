@@ -9,9 +9,9 @@ via a single lock" the shared-menubar proposal asked for.
 
 Which *raven* leads the menu is a separate question, and it is answered by data
 rather than by code here: a raven declares ``host_priority`` in its descriptor and
-Appistry sorts by it. Huginn declares a higher priority than Muninn and therefore
+Roost sorts by it. Huginn declares a higher priority than Muninn and therefore
 leads when both are present; when it is absent, Muninn's section simply sorts
-first and the same menu runs standalone. Appistry does not know either name.
+first and the same menu runs standalone. Roost does not know either name.
 """
 
 from __future__ import annotations
@@ -22,12 +22,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import menu_spec
-import paths
-import raven_client
-import ravens
-import sanitize
-from menu_spec import RavenMenu
+from roost import menu_spec
+from roost import paths
+from roost import raven_client
+from roost import ravens
+from roost import sanitize
+from roost.menu_spec import RavenMenu
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -38,11 +38,16 @@ else:  # pragma: no cover - exercised on Windows only
 
 log = logging.getLogger(__name__)
 
-HOST_LOCK_NAME = "menubar.lock"
+#: The host lock's filename. Named for this project, not for the platform surface
+#: it draws: the separate internal Appistry also elects a single tray with a file
+#: called ``.menubar.lock``, and while it keeps that file in its own install tree
+#: rather than in a shared state directory, relying on that to keep the two apart
+#: would make our exclusivity depend on a detail of someone else's code.
+HOST_LOCK_NAME = "roost.lock"
 
 
 def host_lock_path() -> Path:
-    return paths.APPISTRY_DIR / HOST_LOCK_NAME
+    return paths.STATE_DIR / HOST_LOCK_NAME
 
 
 #: Set on a failed :meth:`HostLock.acquire` when the lock file itself could not
@@ -62,7 +67,7 @@ class HostLock:
     file there is no stale-lock case to reason about. On Windows the same
     guarantee comes from an exclusive open of the file.
 
-    The lock lives under Appistry's own state directory at mode 0600, not beside
+    The lock lives under Roost's own state directory at mode 0600, not beside
     the code. A lock file inside the install tree is wrong twice over: a
     read-only or shared install directory makes it uncreatable (which used to
     take the whole tray down with an uncaught ``PermissionError``), and a
@@ -128,7 +133,7 @@ class HostLock:
         except (BlockingIOError, OSError):
             handle.close()
             return self._fail(
-                CONTENDED, "Another Appistry process is already hosting the menu."
+                CONTENDED, "Another Roost process is already hosting the menu."
             )
         self._handle = handle
         self._record_pid()
@@ -151,7 +156,7 @@ class HostLock:
         except OSError:
             handle.close()
             return self._fail(
-                CONTENDED, "Another Appistry process is already hosting the menu."
+                CONTENDED, "Another Roost process is already hosting the menu."
             )
         self._handle = handle
         self._record_pid()
@@ -288,7 +293,7 @@ def build_model(
     """Discover every raven and build the whole menu model.
 
     Order comes from :func:`ravens.discover`, which sorts by the ``host_priority``
-    each raven declares. Appistry contributes no opinion about which raven should
+    each raven declares. Roost contributes no opinion about which raven should
     lead — hardcoding one would be the same mistake as a hardcoded catalog id.
     """
     discovered = ravens.discover(directory)
@@ -299,7 +304,7 @@ def activate(menu: RavenMenu, item: menu_spec.MenuItem) -> str | None:
     """Act on a clicked menu item.
 
     Returns a URL for the caller to open, or None when the action was forwarded
-    to the raven. Appistry does not interpret ``item.action_id``; it hands it back
+    to the raven. Roost does not interpret ``item.action_id``; it hands it back
     to the raven that published it, under that raven's own credential.
     """
     if menu.descriptor is None or not item.clickable:

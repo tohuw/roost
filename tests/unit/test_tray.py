@@ -13,18 +13,18 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import host
-import icons
-import menu_spec
-import ravens
-import tray
-from tray import RowKind
+from roost import host
+from roost import icons
+from roost import menu_spec
+from roost import ravens
+from roost import tray
+from roost.tray import RowKind
 
 
 @pytest.fixture(autouse=True)
 def no_user_icon_config(monkeypatch, tmp_path):
     """Keep the icon submenu deterministic and off the real config."""
-    monkeypatch.setattr(icons.paths, "APPISTRY_DIR", tmp_path)
+    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path)
     return tmp_path
 
 

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# The `roost` command. Deliberately not named `appistry`: that name belongs to a
+# separate internal tool this project was forked from, which is still installed
+# on the same machines and the same PATH.
+#
+# Resolve symlinks portably (macOS readlink -f requires coreutils)
+_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$_SOURCE" ]]; do
+    _SOURCE="$(readlink "$_SOURCE")"
+    [[ "$_SOURCE" != /* ]] && _SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$_SOURCE"
+done
+# This script lives in bin/, so the repository root is one level up.
+REPO_DIR="$(cd "$(dirname "$_SOURCE")/.." && pwd)"
+
+VENV="$REPO_DIR/.venv"
+PYTHON="$VENV/bin/python"
+
+# Bootstrap venv if missing
+if [[ ! -f "$PYTHON" ]]; then
+    echo "Setting up the Roost environment (first run)..."
+    python3 -m venv "$VENV"
+    "$VENV/bin/pip" install -q --upgrade pip wheel
+    "$VENV/bin/pip" install -q -r "$REPO_DIR/requirements.txt"
+fi
+
+# -m from the repository root: the CLI is a package module, and cwd is whatever
+# the user's shell was in.
+cd "$REPO_DIR" || exit 1
+exec "$PYTHON" -m roost.cli "$@"

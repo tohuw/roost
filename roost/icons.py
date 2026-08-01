@@ -1,7 +1,7 @@
 """Selectable tray icon, defaulting to the raven.
 
 The user picks which mark sits in the menu bar or system tray. The choice is
-stored in Appistry's own config and exposed both as a menu submenu (with the
+stored in Roost's own config and exposed both as a menu submenu (with the
 active one marked) and as a CLI verb.
 
 Two files back every icon, because the platforms consume a tray icon
@@ -33,7 +33,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import paths
+from roost import paths
 
 log = logging.getLogger(__name__)
 
@@ -42,12 +42,15 @@ _IS_MACOS = sys.platform == "darwin"
 HERE = Path(__file__).resolve().parent
 ASSETS_DIR = HERE / "assets"
 
-CONFIG_NAME = "config.toml"
+#: Roost's config file, inside Roost's own state directory. Named rather than
+#: left as a generic ``config.toml`` so it is self-describing if it is ever looked
+#: at next to another tool's state.
+CONFIG_NAME = "roost.toml"
 
 #: The icon used when nothing is configured.
 DEFAULT_ICON = "raven"
 
-#: Extensions a user may point ``appistry icon set`` at. SVG is absent on
+#: Extensions a user may point ``roost icon set`` at. SVG is absent on
 #: purpose: neither rumps nor pystray can rasterize one, and the vector sources
 #: in ``assets/`` are converted ahead of time by tools/build-icons.sh.
 USER_ICON_SUFFIXES = {".png", ".ico"}
@@ -75,7 +78,7 @@ class IconChoice:
 
 
 def config_path() -> Path:
-    return paths.APPISTRY_DIR / CONFIG_NAME
+    return paths.STATE_DIR / CONFIG_NAME
 
 
 # ── Built-in catalog ──────────────────────────────────────────────────────────
@@ -169,7 +172,7 @@ def resolve_user_icon(raw: str) -> IconChoice | None:
 # ── Config I/O ────────────────────────────────────────────────────────────────
 
 def _load_config() -> dict:
-    """Read Appistry's config, degrading to empty rather than raising.
+    """Read Roost's config, degrading to empty rather than raising.
 
     Every entry point loads this, including the CLI verb that would let the user
     fix a bad value, so an unparseable file must not be able to lock them out.
@@ -185,7 +188,7 @@ def _load_config() -> dict:
         with path.open("rb") as handle:
             return tomllib.load(handle)
     except Exception:
-        log.warning("Appistry config at %s is unreadable; using defaults", path)
+        log.warning("Roost config at %s is unreadable; using defaults", path)
         return {}
 
 
@@ -220,7 +223,7 @@ def set_icon(value: str) -> None:
     """
     config = _load_config()
     config["icon"] = value
-    lines = ["# Appistry configuration. Managed by `appistry icon`.", ""]
+    lines = ["# Roost configuration. Managed by `roost icon`.", ""]
     for key in sorted(config):
         raw = config[key]
         if isinstance(raw, str):
@@ -238,7 +241,7 @@ def clear_icon() -> None:
     """Drop the icon setting, reverting to the default."""
     config = _load_config()
     config.pop("icon", None)
-    lines = ["# Appistry configuration. Managed by `appistry icon`.", ""]
+    lines = ["# Roost configuration. Managed by `roost icon`.", ""]
     for key in sorted(config):
         raw = config[key]
         if isinstance(raw, str):
@@ -252,7 +255,7 @@ def resolve(value: str | None = None) -> IconChoice | None:
     """Resolve an icon value (or the configured one) to a usable choice.
 
     Falls back to the default when the configured value no longer resolves — a
-    user who deletes the PNG they pointed Appistry at gets the raven back, not a
+    user who deletes the PNG they pointed Roost at gets the raven back, not a
     tray with no icon at all.
     """
     raw = configured_icon() if value is None else value

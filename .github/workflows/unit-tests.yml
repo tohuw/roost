@@ -35,12 +35,12 @@ jobs:
       - name: Run unit tests
         run: python -m pytest tests/unit -q
 
-      - name: Smoke-test console entry point
-        run: appistry --help
+      - name: Smoke-test the console entry point
+        run: roost --help
 
       - name: Import the Windows tray
         if: runner.os == 'Windows'
-        run: python -c "import windows_support, windows_tray"
+        run: python -c "from roost import windows_support, windows_tray"
 
       - name: Exercise native Windows runtime
         if: runner.os == 'Windows'

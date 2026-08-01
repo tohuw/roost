@@ -17,9 +17,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import host
-import paths
-import windows_support
+from roost import host
+from roost import paths
+from roost import windows_support
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows host required")
 
@@ -29,25 +29,26 @@ def test_real_startup_shortcut_round_trip(tmp_path, monkeypatch):
     import win32com.client
 
     monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
-    monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path / ".appistry")
-    appistry_dir = tmp_path / "Appistry Home"
-    appistry_dir.mkdir()
+    monkeypatch.setattr(paths, "STATE_DIR", tmp_path / "roost")
+    repo_dir = tmp_path / "Roost Home"
+    repo_dir.mkdir()
 
-    startup, menu = windows_support.install_appistry_shortcuts(appistry_dir)
+    startup, menu = windows_support.install_shortcuts(repo_dir)
 
     assert startup.is_file()
     assert menu.is_file()
     shortcut = win32com.client.Dispatch("WScript.Shell").CreateShortcut(str(startup))
-    expected_target = appistry_dir / ".venv" / "Scripts" / "pythonw.exe"
+    expected_target = repo_dir / ".venv" / "Scripts" / "pythonw.exe"
     assert os.path.normcase(os.path.abspath(shortcut.TargetPath)) == os.path.normcase(
         os.path.abspath(expected_target)
     )
-    assert "windows_tray.py" in shortcut.Arguments
+    assert windows_support.TRAY_MODULE in shortcut.Arguments
+    assert "windows_tray.py" not in shortcut.Arguments
 
 
 def test_the_host_lock_excludes_a_second_tray(tmp_path):
     """One process draws the menu; the second must be refused, not crash."""
-    path = tmp_path / "menubar.lock"
+    path = tmp_path / "roost.lock"
     first, second = host.HostLock(path), host.HostLock(path)
     try:
         assert first.acquire() is True
@@ -62,7 +63,7 @@ def test_the_host_lock_excludes_a_second_tray(tmp_path):
 
 def test_the_host_lock_is_released_when_the_holder_exits(tmp_path):
     """The OS drops the lock on process death, so there is no stale-lock case."""
-    path = tmp_path / "menubar.lock"
+    path = tmp_path / "roost.lock"
     script = (
         f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r})\n"
         "import host\n"
@@ -80,8 +81,8 @@ def test_the_host_lock_is_released_when_the_holder_exits(tmp_path):
 
 def test_the_real_tray_image_decodes(tmp_path, monkeypatch):
     """pystray needs a decoded bitmap; the checked-in colour PNG must load."""
-    monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path / ".appistry")
-    import windows_tray
+    monkeypatch.setattr(paths, "STATE_DIR", tmp_path / "roost")
+    from roost import windows_tray
 
     image = windows_tray._tray_image()
 
@@ -106,7 +107,7 @@ def test_userprofile_redirects_path_home_in_a_real_child(tmp_path):
 
 def test_a_windows_descriptor_directory_resolves_under_localappdata(tmp_path, monkeypatch):
     """The path rule is the contract both ravens follow, so pin it on the real OS."""
-    import ravens
+    from roost import ravens
 
     monkeypatch.delenv("RAVENS_STATE_DIR", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))

@@ -1,6 +1,6 @@
-"""The Appistry CLI.
+"""The Roost CLI.
 
-Appistry is a status menu bar, not a launcher, so the CLI is small on purpose.
+Roost is a status menu bar, not a launcher, so the CLI is small on purpose.
 The ravens start themselves and publish their own descriptors; nothing here
 registers, starts, stops, or opens anything on their behalf.
 
@@ -21,15 +21,27 @@ import subprocess
 import sys
 from pathlib import Path
 
-import help_server
-import icons
-import paths
-import ravens
-import sanitize
-import windows_support
+from roost import help_server
+from roost import icons
+from roost import paths
+from roost import ravens
+from roost import sanitize
+from roost import windows_support
 
 HERE = Path(__file__).resolve().parent
-LABEL = "com.appistry.menubar"
+#: The repository root — the directory containing the ``roost`` package, and what
+#: an install operates on (the venv, the requirements file, the shim).
+REPO = HERE.parent
+
+#: The launchd agent's label, and therefore also its plist filename. Reverse-DNS
+#: under a domain this project actually owns rather than ``com.appistry.*``, which
+#: belongs to the separate internal Appistry: two agents sharing a label means
+#: ``launchctl load`` on one silently displaces the other.
+LABEL = "com.tohuw.roost"
+
+#: The console script this project installs. Not ``appistry`` — that name is the
+#: internal tool's and is on the user's PATH already.
+COMMAND = "roost"
 
 
 # ── ravens ────────────────────────────────────────────────────────────────────
@@ -109,13 +121,13 @@ def cmd_icon(args: argparse.Namespace) -> int:
 
 def _install_windows(args: argparse.Namespace) -> int:
     if sys.version_info < (3, 10):
-        print("Error: Appistry for Windows requires Python 3.10 or newer.",
+        print("Error: Roost for Windows requires Python 3.10 or newer.",
               file=sys.stderr)
         return 1
 
-    venv_dir = HERE / ".venv"
+    venv_dir = REPO / ".venv"
     venv_python = venv_dir / "Scripts" / "python.exe"
-    requirements = HERE / "requirements.txt"
+    requirements = REPO / "requirements.txt"
 
     running_from_target_venv = False
     try:
@@ -139,7 +151,7 @@ def _install_windows(args: argparse.Namespace) -> int:
             return 1
     elif reinstall_in_place:
         windows_support.stop_tray()
-        print("Refreshing the active Appistry virtual environment in place...")
+        print("Refreshing the active Roost virtual environment in place...")
     else:
         print("Virtual environment already exists (use --force to recreate).")
 
@@ -152,29 +164,29 @@ def _install_windows(args: argparse.Namespace) -> int:
         print("Error: dependency installation failed.", file=sys.stderr)
         return 1
     if subprocess.run([
-        str(venv_python), "-m", "pip", "install", "--editable", str(HERE)
+        str(venv_python), "-m", "pip", "install", "--editable", str(REPO)
     ]).returncode:
-        print("Error: Appistry CLI installation failed.", file=sys.stderr)
+        print("Error: Roost CLI installation failed.", file=sys.stderr)
         return 1
 
-    paths.appistry_dir()
-    startup, menu = windows_support.install_appistry_shortcuts(HERE)
+    paths.ensure_state_dir()
+    startup, menu = windows_support.install_shortcuts(REPO)
     print(f"Startup shortcut: {startup}")
     print(f"Start Menu shortcut: {menu}")
 
     cli_dir = venv_dir / "Scripts"
     if windows_support.add_cli_dir_to_user_path(cli_dir):
         print(f"Added to user PATH: {cli_dir}")
-        print("Open a new terminal before using the 'appistry' command.")
+        print("Open a new terminal before using the 'roost' command.")
 
-    if not windows_support.start_tray(HERE):
+    if not windows_support.start_tray(REPO):
         print(
-            f"Error: the Appistry tray failed to start; check "
-            f"{paths.APPISTRY_DIR / 'menubar.log'}.",
+            f"Error: the Roost tray failed to start; check "
+            f"{paths.log_path()}.",
             file=sys.stderr,
         )
         return 1
-    print("Appistry installed and running.")
+    print("Roost installed and running.")
     return 0
 
 
@@ -183,12 +195,12 @@ def cmd_install(args: argparse.Namespace) -> int:
         return _install_windows(args)
 
     home = Path.home()
-    venv_dir = HERE / ".venv"
+    venv_dir = REPO / ".venv"
     pip_bin = venv_dir / "bin" / "pip"
-    reqs_file = HERE / "requirements.txt"
+    reqs_file = REPO / "requirements.txt"
     plist_dir = home / "Library" / "LaunchAgents"
     plist_path = plist_dir / f"{LABEL}.plist"
-    log_path = paths.appistry_dir() / "menubar.log"
+    log_path = paths.ensure_state_dir() / paths.LOG_NAME
 
     if venv_dir.exists() and not args.force:
         print("Virtual environment already exists (use --force to recreate).")
@@ -217,10 +229,17 @@ def cmd_install(args: argparse.Namespace) -> int:
     plist_dir.mkdir(parents=True, exist_ok=True)
     plist_path.write_bytes(plistlib.dumps({
         "Label": LABEL,
+        # ``-m roost.menubar`` rather than a path to the file: the tray is a
+        # package module now, and running it by path would put the package's own
+        # directory on sys.path instead of its parent. WorkingDirectory is what
+        # makes the package importable — launchd starts an agent in ``/`` and
+        # sources no shell profile, so there is no PYTHONPATH to rely on.
         "ProgramArguments": [
             str(venv_dir / "bin" / "python"),
-            str(HERE / "menubar.py"),
+            "-m",
+            "roost.menubar",
         ],
+        "WorkingDirectory": str(REPO),
         "RunAtLoad": True,
         "KeepAlive": False,
         "StandardOutPath": str(log_path),
@@ -233,10 +252,10 @@ def cmd_install(args: argparse.Namespace) -> int:
         print("Warning: launchctl load failed.", file=sys.stderr)
     subprocess.run(["launchctl", "start", LABEL])
 
-    shim = HERE / "appistry"
+    shim = REPO / "bin" / COMMAND
     if shim.exists():
         for bin_dir in (Path("/usr/local/bin"), home / ".local" / "bin"):
-            target = bin_dir / "appistry"
+            target = bin_dir / COMMAND
             try:
                 bin_dir.mkdir(parents=True, exist_ok=True)
                 if target.exists() or target.is_symlink():
@@ -246,14 +265,17 @@ def cmd_install(args: argparse.Namespace) -> int:
                 import os
 
                 if str(bin_dir) not in os.environ.get("PATH", "").split(":"):
-                    print(f"Note: add {bin_dir} to your PATH to use 'appistry'.")
+                    print(f"Note: add {bin_dir} to your PATH to use 'roost'.")
                 break
             except (PermissionError, FileNotFoundError):
                 continue
         else:
-            print(f"Note: could not install the CLI symlink; add {HERE} to your PATH.")
+            shim_dir = REPO / "bin"
+            print(
+                f"Note: could not install the CLI symlink; add {shim_dir} to your PATH."
+            )
 
-    print("Appistry installed and running.")
+    print("Roost installed and running.")
     return 0
 
 
@@ -261,15 +283,15 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     if windows_support.is_windows():
         windows_support.stop_tray()
         windows_support.uninstall_shortcuts()
-        cli_dir = HERE / ".venv" / "Scripts"
+        cli_dir = REPO / ".venv" / "Scripts"
         if windows_support.remove_cli_dir_from_user_path(cli_dir):
             print(f"Removed from user PATH: {cli_dir}")
-        print("Appistry uninstalled. The ravens were not touched.")
+        print("Roost uninstalled. The ravens were not touched.")
         return 0
 
     home = Path.home()
     plist_path = home / "Library" / "LaunchAgents" / f"{LABEL}.plist"
-    shim = HERE / "appistry"
+    shim = REPO / "bin" / COMMAND
 
     subprocess.run(["launchctl", "stop", LABEL], capture_output=True)
     subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
@@ -280,7 +302,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         print("Plist not found (already removed?).")
 
     for bin_dir in (Path("/usr/local/bin"), home / ".local" / "bin"):
-        symlink = bin_dir / "appistry"
+        symlink = bin_dir / COMMAND
         if symlink.is_symlink():
             try:
                 if symlink.resolve() == shim.resolve():
@@ -291,7 +313,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
             except PermissionError:
                 print(f"Note: could not remove {symlink} (no write permission).")
 
-    print("Appistry uninstalled. The ravens were not touched.")
+    print("Roost uninstalled. The ravens were not touched.")
     return 0
 
 
@@ -308,30 +330,30 @@ def cmd_ui(args: argparse.Namespace) -> int:
     """
     if windows_support.is_windows():
         if windows_support.tray_is_running():
-            print("The Appistry tray is already running.")
+            print("The Roost tray is already running.")
             return 0
-        if not windows_support.start_tray(HERE):
+        if not windows_support.start_tray(REPO):
             print(
-                f"Failed to start the Appistry tray; check "
-                f"{paths.APPISTRY_DIR / 'menubar.log'}.",
+                f"Failed to start the Roost tray; check "
+                f"{paths.log_path()}.",
                 file=sys.stderr,
             )
             return 1
-        print("Appistry tray started.")
+        print("Roost tray started.")
         return 0
 
     if help_server.active_port() is not None and _macos_tray_responding():
-        print("The Appistry menu bar is already running.")
+        print("The Roost menu bar is already running.")
         return 0
 
     if subprocess.run(["launchctl", "start", LABEL], capture_output=True).returncode:
         print(
             "Failed to start the menu bar via launchd. "
-            "Run `appistry install` first to register the launch agent.",
+            "Run `roost install` first to register the launch agent.",
             file=sys.stderr,
         )
         return 1
-    print("Appistry menu bar started.")
+    print("Roost menu bar started.")
     return 0
 
 
@@ -347,7 +369,7 @@ def _macos_tray_responding() -> bool:
         with urllib.request.urlopen(
             f"http://127.0.0.1:{port}/api/status", timeout=0.5
         ) as response:
-            return json.loads(response.read(1024)) == {"service": "appistry", "ok": True}
+            return json.loads(response.read(1024)) == {"service": "roost", "ok": True}
     except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError):
         return False
 
@@ -356,7 +378,7 @@ def _macos_tray_responding() -> bool:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="appistry",
+        prog=COMMAND,
         description="The shared status menu bar for the ravens.",
     )
     sub = parser.add_subparsers(dest="verb", metavar="COMMAND")

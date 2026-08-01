@@ -16,16 +16,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import appistry
-import icons
-import paths
-import ravens
+from roost import cli
+from roost import icons
+from roost import paths
+from roost import ravens
 
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
-    monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path / ".appistry")
-    monkeypatch.setattr(icons.paths, "APPISTRY_DIR", tmp_path / ".appistry")
+    monkeypatch.setattr(paths, "STATE_DIR", tmp_path / "roost")
+    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path / "roost")
     monkeypatch.setenv("RAVENS_STATE_DIR", str(tmp_path / "ravens"))
     return tmp_path
 
@@ -51,29 +51,29 @@ class TestNoLauncherVerbs:
         "run", "window", "hook-url", "migrate", "rebuild",
     ])
     def test_the_verb_is_not_offered(self, verb):
-        assert verb not in appistry.COMMANDS
+        assert verb not in cli.COMMANDS
 
     @pytest.mark.parametrize("verb", [
         "register", "start", "stop", "launch", "hook-url",
     ])
     def test_the_verb_is_rejected_by_the_parser(self, verb):
         with pytest.raises(SystemExit) as exit_info:
-            appistry.build_parser().parse_args([verb])
+            cli.build_parser().parse_args([verb])
         assert exit_info.value.code != 0
 
     def test_the_module_imports_no_launcher_module(self):
-        source = Path(appistry.__file__).read_text(encoding="utf-8")
+        source = Path(cli.__file__).read_text(encoding="utf-8")
         for forbidden in ("import process", "import registry", "import launch",
                           "import cleanup", "import hooks"):
             assert forbidden not in source, forbidden
 
     def test_the_cli_spawns_no_raven(self):
-        source = Path(appistry.__file__).read_text(encoding="utf-8")
+        source = Path(cli.__file__).read_text(encoding="utf-8")
         for forbidden in ("os.execve", "os.kill", "SIGTERM"):
             assert forbidden not in source, forbidden
 
     def test_the_remaining_verbs_are_the_documented_ones(self):
-        assert set(appistry.COMMANDS) == {
+        assert set(cli.COMMANDS) == {
             "install", "uninstall", "ui", "ravens", "icon"
         }
 
@@ -82,7 +82,7 @@ class TestNoLauncherVerbs:
 
 class TestCmdRavens:
     def _run(self):
-        return appistry.cmd_ravens(argparse.Namespace())
+        return cli.cmd_ravens(argparse.Namespace())
 
     def test_a_missing_directory_is_reported_not_an_error(self, capsys):
         assert self._run() == 0
@@ -163,25 +163,25 @@ class TestCmdRavens:
 
 class TestCmdIcon:
     def test_list_marks_the_active_icon(self, capsys):
-        assert appistry.cmd_icon(argparse.Namespace(icon_action="list")) == 0
+        assert cli.cmd_icon(argparse.Namespace(icon_action="list")) == 0
         assert capsys.readouterr().out.count("*") == 1
 
     def test_set_persists_a_builtin_name(self):
-        code = appistry.cmd_icon(
+        code = cli.cmd_icon(
             argparse.Namespace(icon_action="set", value=icons.DEFAULT_ICON)
         )
         assert code == 0
         assert icons.configured_icon() == icons.DEFAULT_ICON
 
     def test_set_rejects_an_unknown_name(self, capsys):
-        code = appistry.cmd_icon(
+        code = cli.cmd_icon(
             argparse.Namespace(icon_action="set", value="not-an-icon")
         )
         assert code == 1
         assert "not a built-in icon name" in capsys.readouterr().err
 
     def test_set_rejects_a_relative_path(self):
-        code = appistry.cmd_icon(
+        code = cli.cmd_icon(
             argparse.Namespace(icon_action="set", value="./sneaky.png")
         )
         assert code == 1
@@ -190,33 +190,33 @@ class TestCmdIcon:
         """SVG is absent on purpose: neither toolkit can rasterize one."""
         svg = tmp_path / "icon.svg"
         svg.write_text("<svg/>", encoding="utf-8")
-        assert appistry.cmd_icon(
+        assert cli.cmd_icon(
             argparse.Namespace(icon_action="set", value=str(svg))
         ) == 1
 
     def test_set_accepts_an_absolute_png(self, tmp_path):
         png = tmp_path / "mine.png"
         png.write_bytes(b"\x89PNG\r\n\x1a\n")
-        assert appistry.cmd_icon(
+        assert cli.cmd_icon(
             argparse.Namespace(icon_action="set", value=str(png))
         ) == 0
         assert icons.configured_icon() == str(png)
 
     def test_a_rejected_value_is_not_persisted(self, tmp_path):
-        assert appistry.cmd_icon(
+        assert cli.cmd_icon(
             argparse.Namespace(icon_action="set", value="not-an-icon")
         ) == 1
         assert icons.configured_icon() == ""
 
     def test_reset_clears_the_setting(self):
         icons.set_icon("something")
-        assert appistry.cmd_icon(argparse.Namespace(icon_action="reset")) == 0
+        assert cli.cmd_icon(argparse.Namespace(icon_action="reset")) == 0
         assert icons.configured_icon() == ""
 
     def test_a_bare_icon_verb_lists(self, monkeypatch, capsys):
-        monkeypatch.setattr(sys, "argv", ["appistry", "icon"])
+        monkeypatch.setattr(sys, "argv", ["roost", "icon"])
         with pytest.raises(SystemExit) as exit_info:
-            appistry.main()
+            cli.main()
         assert exit_info.value.code == 0
         assert "*" in capsys.readouterr().out
 
@@ -225,125 +225,125 @@ class TestCmdIcon:
 
 class TestParser:
     def test_no_verb_prints_help_and_exits_zero(self, monkeypatch, capsys):
-        monkeypatch.setattr(sys, "argv", ["appistry"])
+        monkeypatch.setattr(sys, "argv", ["roost"])
         with pytest.raises(SystemExit) as exit_info:
-            appistry.main()
+            cli.main()
         assert exit_info.value.code == 0
         assert "usage" in capsys.readouterr().out.lower()
 
     def test_help_exits_zero(self, monkeypatch):
-        monkeypatch.setattr(sys, "argv", ["appistry", "--help"])
+        monkeypatch.setattr(sys, "argv", ["roost", "--help"])
         with pytest.raises(SystemExit) as exit_info:
-            appistry.main()
+            cli.main()
         assert exit_info.value.code == 0
 
     def test_every_verb_has_a_handler(self):
-        parser = appistry.build_parser()
+        parser = cli.build_parser()
         actions = [
             action for action in parser._actions
             if isinstance(action, argparse._SubParsersAction)
         ]
         assert actions
         for verb in actions[0].choices:
-            assert verb in appistry.COMMANDS, verb
+            assert verb in cli.COMMANDS, verb
 
 
 # ── ui ────────────────────────────────────────────────────────────────────────
 
 class TestCmdUi:
     def test_a_running_menu_bar_is_not_started_twice(self, monkeypatch, capsys):
-        monkeypatch.setattr(appistry.windows_support, "is_windows", lambda: False)
-        monkeypatch.setattr(appistry.help_server, "active_port", lambda: 54321)
-        monkeypatch.setattr(appistry, "_macos_tray_responding", lambda: True)
+        monkeypatch.setattr(cli.windows_support, "is_windows", lambda: False)
+        monkeypatch.setattr(cli.help_server, "active_port", lambda: 54321)
+        monkeypatch.setattr(cli, "_macos_tray_responding", lambda: True)
         monkeypatch.setattr(
-            appistry.subprocess, "run",
+            cli.subprocess, "run",
             lambda *_a, **_k: pytest.fail("launchctl must not run"),
         )
 
-        assert appistry.cmd_ui(argparse.Namespace()) == 0
+        assert cli.cmd_ui(argparse.Namespace()) == 0
         assert "already running" in capsys.readouterr().out
 
     def test_a_stale_port_file_does_not_block_a_start(self, monkeypatch):
         """A crashed tray leaves its port file behind; probing is what decides."""
-        monkeypatch.setattr(appistry.windows_support, "is_windows", lambda: False)
-        monkeypatch.setattr(appistry.help_server, "active_port", lambda: 54321)
-        monkeypatch.setattr(appistry, "_macos_tray_responding", lambda: False)
+        monkeypatch.setattr(cli.windows_support, "is_windows", lambda: False)
+        monkeypatch.setattr(cli.help_server, "active_port", lambda: 54321)
+        monkeypatch.setattr(cli, "_macos_tray_responding", lambda: False)
         calls = []
 
         class Result:
             returncode = 0
 
-        monkeypatch.setattr(appistry.subprocess, "run",
+        monkeypatch.setattr(cli.subprocess, "run",
                             lambda argv, **_k: calls.append(argv) or Result())
 
-        assert appistry.cmd_ui(argparse.Namespace()) == 0
-        assert calls == [["launchctl", "start", appistry.LABEL]]
+        assert cli.cmd_ui(argparse.Namespace()) == 0
+        assert calls == [["launchctl", "start", cli.LABEL]]
 
     def test_a_launchd_failure_is_reported(self, monkeypatch, capsys):
-        monkeypatch.setattr(appistry.windows_support, "is_windows", lambda: False)
-        monkeypatch.setattr(appistry.help_server, "active_port", lambda: None)
+        monkeypatch.setattr(cli.windows_support, "is_windows", lambda: False)
+        monkeypatch.setattr(cli.help_server, "active_port", lambda: None)
 
         class Result:
             returncode = 1
 
-        monkeypatch.setattr(appistry.subprocess, "run", lambda *_a, **_k: Result())
+        monkeypatch.setattr(cli.subprocess, "run", lambda *_a, **_k: Result())
 
-        assert appistry.cmd_ui(argparse.Namespace()) == 1
-        assert "appistry install" in capsys.readouterr().err
+        assert cli.cmd_ui(argparse.Namespace()) == 1
+        assert "roost install" in capsys.readouterr().err
 
     def test_a_running_windows_tray_is_not_started_twice(self, monkeypatch, capsys):
-        monkeypatch.setattr(appistry.windows_support, "is_windows", lambda: True)
-        monkeypatch.setattr(appistry.windows_support, "tray_is_running", lambda: True)
+        monkeypatch.setattr(cli.windows_support, "is_windows", lambda: True)
+        monkeypatch.setattr(cli.windows_support, "tray_is_running", lambda: True)
         monkeypatch.setattr(
-            appistry.windows_support, "start_tray",
+            cli.windows_support, "start_tray",
             lambda *_a, **_k: pytest.fail("the tray must not be started twice"),
         )
 
-        assert appistry.cmd_ui(argparse.Namespace()) == 0
+        assert cli.cmd_ui(argparse.Namespace()) == 0
         assert "already running" in capsys.readouterr().out
 
     def test_a_windows_start_failure_is_reported(self, monkeypatch, capsys):
-        monkeypatch.setattr(appistry.windows_support, "is_windows", lambda: True)
-        monkeypatch.setattr(appistry.windows_support, "tray_is_running", lambda: False)
-        monkeypatch.setattr(appistry.windows_support, "start_tray",
+        monkeypatch.setattr(cli.windows_support, "is_windows", lambda: True)
+        monkeypatch.setattr(cli.windows_support, "tray_is_running", lambda: False)
+        monkeypatch.setattr(cli.windows_support, "start_tray",
                             lambda *_a, **_k: False)
 
-        assert appistry.cmd_ui(argparse.Namespace()) == 1
-        assert "menubar.log" in capsys.readouterr().err
+        assert cli.cmd_ui(argparse.Namespace()) == 1
+        assert paths.LOG_NAME in capsys.readouterr().err
 
 
 # ── uninstall ─────────────────────────────────────────────────────────────────
 
 class TestCmdUninstall:
     def test_uninstall_stops_no_raven(self, monkeypatch, capsys):
-        """The ravens outlive Appistry; uninstalling the tray must not touch them."""
-        monkeypatch.setattr(appistry.windows_support, "is_windows", lambda: False)
+        """The ravens outlive Roost; uninstalling the tray must not touch them."""
+        monkeypatch.setattr(cli.windows_support, "is_windows", lambda: False)
 
         class Result:
             returncode = 0
 
-        monkeypatch.setattr(appistry.subprocess, "run", lambda *_a, **_k: Result())
+        monkeypatch.setattr(cli.subprocess, "run", lambda *_a, **_k: Result())
 
-        assert appistry.cmd_uninstall(argparse.Namespace()) == 0
+        assert cli.cmd_uninstall(argparse.Namespace()) == 0
         assert "were not touched" in capsys.readouterr().out
 
     def test_uninstall_leaves_a_foreign_symlink_alone(
         self, monkeypatch, tmp_path, capsys
     ):
-        monkeypatch.setattr(appistry.windows_support, "is_windows", lambda: False)
-        monkeypatch.setattr(appistry.Path, "home", classmethod(lambda _cls: tmp_path))
+        monkeypatch.setattr(cli.windows_support, "is_windows", lambda: False)
+        monkeypatch.setattr(cli.Path, "home", classmethod(lambda _cls: tmp_path))
 
         class Result:
             returncode = 0
 
-        monkeypatch.setattr(appistry.subprocess, "run", lambda *_a, **_k: Result())
+        monkeypatch.setattr(cli.subprocess, "run", lambda *_a, **_k: Result())
         bin_dir = tmp_path / ".local" / "bin"
         bin_dir.mkdir(parents=True)
         other = tmp_path / "somewhere-else"
         other.write_text("#!/bin/sh\n", encoding="utf-8")
-        (bin_dir / "appistry").symlink_to(other)
+        (bin_dir / "roost").symlink_to(other)
 
-        appistry.cmd_uninstall(argparse.Namespace())
+        cli.cmd_uninstall(argparse.Namespace())
 
-        assert (bin_dir / "appistry").is_symlink()
+        assert (bin_dir / "roost").is_symlink()
         assert "points elsewhere" in capsys.readouterr().out

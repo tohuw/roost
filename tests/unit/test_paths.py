@@ -1,4 +1,4 @@
-"""Tests for Appistry's own state directory and its owner-only write helpers."""
+"""Tests for Roost's own state directory and its owner-only write helpers."""
 
 import os
 import stat
@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import paths
+from roost import paths
 
 _POSIX_ONLY = pytest.mark.skipif(
     sys.platform == "win32", reason="POSIX mode bits are not meaningful on Windows"
@@ -101,11 +101,11 @@ class TestAtomicWriteText:
         assert list(tmp_path.iterdir()) == []
 
 
-class TestAppistryDir:
+class TestStateDir:
     def test_returns_and_creates_the_state_directory(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path / ".appistry")
-        result = paths.appistry_dir()
-        assert result == tmp_path / ".appistry"
+        monkeypatch.setattr(paths, "STATE_DIR", tmp_path / "roost")
+        result = paths.ensure_state_dir()
+        assert result == tmp_path / "roost"
         assert result.is_dir()
 
 

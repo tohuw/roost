@@ -15,13 +15,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import host
-import icons
-import menu_spec
-import ravens
-import tray
-import windows_tray
-from tray import RowKind
+from roost import host
+from roost import icons
+from roost import menu_spec
+from roost import ravens
+from roost import tray
+from roost import windows_tray
+from roost.tray import RowKind
 
 
 class _FakeMenu:
@@ -47,8 +47,8 @@ class _FakePystray:
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
-    monkeypatch.setattr(icons.paths, "APPISTRY_DIR", tmp_path)
-    monkeypatch.setattr(windows_tray.paths, "APPISTRY_DIR", tmp_path)
+    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(windows_tray.paths, "STATE_DIR", tmp_path)
     return tmp_path
 
 
@@ -75,8 +75,8 @@ def _live_menu(name="huginn", *labels, badge=0):
 
 def _tray(model=None):
     """Build the tray without pystray, PIL, or a real Windows session."""
-    instance = windows_tray.AppistryWindowsTray.__new__(
-        windows_tray.AppistryWindowsTray
+    instance = windows_tray.RoostWindowsTray.__new__(
+        windows_tray.RoostWindowsTray
     )
     instance._pystray = _FakePystray
     instance._signature = None
@@ -120,12 +120,12 @@ class TestRendering:
                        children=(
                            tray.Row(RowKind.HOST, label="Raven", action="icon:raven",
                                     enabled=True, checked=True),
-                           tray.Row(RowKind.HOST, label="Appistry",
-                                    action="icon:appistry", enabled=True),
+                           tray.Row(RowKind.HOST, label="Roost",
+                                    action="icon:roost", enabled=True),
                        ))
         item = _tray()._render(row)
         children = item.action.items
-        assert [child.text for child in children] == ["Raven", "Appistry"]
+        assert [child.text for child in children] == ["Raven", "Roost"]
         assert [child.checked(child) for child in children] == [True, False]
 
     def test_the_whole_menu_is_built_from_the_shared_rows(self, monkeypatch):

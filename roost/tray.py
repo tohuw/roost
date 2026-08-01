@@ -24,10 +24,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-import host
-import icons
-import menu_spec
-import sanitize
+from roost import host
+from roost import icons
+from roost import menu_spec
+from roost import sanitize
 
 
 class RowKind(Enum):
@@ -43,7 +43,7 @@ class RowKind(Enum):
     ITEM = "item"
     #: A visual divider.
     SEPARATOR = "separator"
-    #: One of Appistry's own rows (Help, Quit, the icon submenu's parent).
+    #: One of Roost's own rows (Help, Quit, the icon submenu's parent).
     HOST = "host"
 
 
@@ -63,7 +63,7 @@ NO_RAVENS_LABEL = "No ravens are running"
 
 HELP_LABEL = "Help"
 ICON_LABEL = "Tray icon"
-QUIT_LABEL = "Quit Appistry"
+QUIT_LABEL = "Quit Roost"
 
 
 @dataclass(frozen=True)
@@ -114,7 +114,7 @@ def raven_label(menu: "menu_spec.RavenMenu") -> str:
     """Return the header text for one raven, including its badge count.
 
     The badge is the raven's own number — how many things it says want
-    attention. Appistry does not compute it and does not know what it counts.
+    attention. Roost does not compute it and does not know what it counts.
     """
     display = menu.display or menu.name or "Unknown raven"
     if menu.available and menu.spec.badge:
@@ -174,7 +174,7 @@ def build_rows(model: "host.MenuModel") -> list[Row]:
     """Return every row of the whole menu, in the order it should be drawn.
 
     The ravens come first, in the order the model already holds — which is the
-    order the ravens' own ``host_priority`` produced. Appistry's own rows follow.
+    order the ravens' own ``host_priority`` produced. Roost's own rows follow.
     """
     rows: list[Row] = []
 

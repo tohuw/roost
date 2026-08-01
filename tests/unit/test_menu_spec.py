@@ -1,6 +1,6 @@
 """Menu-as-data parsing tests.
 
-The contract under test is that Appistry renders a raven's menu without
+The contract under test is that Roost renders a raven's menu without
 interpreting it, and that it cannot be made to render something dangerous or
 unbounded. So: labels are sanitised, action ids are forwarded opaquely, URLs stay
 raven-local, and every dimension of the payload is bounded.
@@ -13,9 +13,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import menu_spec
-import ravens
-import sanitize
+from roost import menu_spec
+from roost import ravens
+from roost import sanitize
 
 
 def _section(*items, **overrides):
@@ -138,8 +138,8 @@ class TestLabelSanitising:
 
 
 class TestActionIdForwarding:
-    def test_action_id_is_opaque_to_appistry(self):
-        """Appistry does not parse the id; it round-trips whatever the raven sent."""
+    def test_action_id_is_opaque_to_roost(self):
+        """Roost does not parse the id; it round-trips whatever the raven sent."""
         weird = "session/abc-123:focus?x=1&y=2"
         item = menu_spec.parse_item({"id": weird, "label": "Row"})
         assert item.action_id == weird

@@ -1,7 +1,7 @@
 """Text sanitising for strings that arrive from a raven.
 
 A raven descriptor and a raven's menu payload are **untrusted input**: they are
-files and HTTP responses written by another process, and Appistry renders them
+files and HTTP responses written by another process, and Roost renders them
 into a desktop menu and into its own log file. Two attack shapes matter:
 
 - **Terminal / log forgery.** An ANSI escape or a bare control character in a

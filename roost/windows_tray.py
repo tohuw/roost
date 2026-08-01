@@ -20,13 +20,13 @@ import traceback
 import webbrowser
 from pathlib import Path
 
-import help_server
-import host
-import icons
-import paths
-import tray
-import windows_support
-from tray import RowKind
+from roost import help_server
+from roost import host
+from roost import icons
+from roost import paths
+from roost import tray
+from roost import windows_support
+from roost.tray import RowKind
 
 HERE = Path(__file__).resolve().parent
 log = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ def _tray_image():
         return image.convert("RGBA")
 
 
-class AppistryWindowsTray:
+class RoostWindowsTray:
     """The tray. Renders rows; interprets nothing."""
 
     def __init__(self):
@@ -64,7 +64,10 @@ class AppistryWindowsTray:
         self._signature = None
         self._model = host.MenuModel()
         self._icon = pystray.Icon(
-            "appistry", _tray_image(), "Ravens", menu=self._build_menu()
+            # The pystray name is the tray's OS-level identity on Windows. It must
+            # not be "appistry": the separate internal Appistry ships its own
+            # Windows tray under that name, and both can be running.
+            "roost", _tray_image(), "Ravens", menu=self._build_menu()
         )
 
     # ── Rendering ────────────────────────────────────────────────────────────
@@ -169,7 +172,7 @@ class AppistryWindowsTray:
     def _setup(self, icon) -> None:
         icon.visible = True
         threading.Thread(
-            target=self._poll, name="appistry-windows-poll", daemon=True
+            target=self._poll, name="roost-windows-poll", daemon=True
         ).start()
 
     def _shutdown(self) -> None:
@@ -188,13 +191,13 @@ class AppistryWindowsTray:
 
 def main() -> int:
     if not windows_support.is_windows():
-        raise SystemExit("windows_tray.py is only available on Windows")
+        raise SystemExit(f"{windows_support.TRAY_MODULE} is only available on Windows")
 
-    paths.appistry_dir()
+    paths.ensure_state_dir()
     from logging.handlers import RotatingFileHandler
 
     handler = RotatingFileHandler(
-        paths.APPISTRY_DIR / "menubar.log", maxBytes=512_000, backupCount=1
+        paths.log_path(), maxBytes=512_000, backupCount=1
     )
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.getLogger().addHandler(handler)
@@ -205,13 +208,13 @@ def main() -> int:
     lock = host.HostLock()
     if not lock.acquire():
         if lock.failure == host.UNWRITABLE:
-            log.error("Appistry cannot start: %s", lock.reason)
+            log.error("Roost cannot start: %s", lock.reason)
             return 1
         return 0
 
     tray_app = None
     try:
-        tray_app = AppistryWindowsTray()
+        tray_app = RoostWindowsTray()
 
         def stop_for_signal(_signum, _frame):
             if tray_app is not None:

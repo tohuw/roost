@@ -18,10 +18,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Keep this directory importable however launchd set up the environment.
 HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+#: The directory containing the ``roost`` package. launchd does not source a
+#: shell profile, so ``PYTHONPATH`` cannot be relied on; the agent runs
+#: ``-m roost.menubar`` from this directory. Inserting it here as well keeps the
+#: module runnable as a plain file path (``python roost/menubar.py``) for anyone
+#: debugging outside the launch agent — running the file puts *this* directory on
+#: ``sys.path``, not its parent, so ``import roost`` would otherwise fail.
+_PACKAGE_ROOT = HERE.parent
+if str(_PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_ROOT))
 
 import logging
 import os
@@ -49,13 +55,13 @@ else:  # pragma: no cover - importability shim only
 
     rumps = _RumpsShim()
 
-import help_server
-import host
-import icons
-import paths
-import sanitize
-import tray
-from tray import RowKind
+from roost import help_server
+from roost import host
+from roost import icons
+from roost import paths
+from roost import sanitize
+from roost import tray
+from roost.tray import RowKind
 
 log = logging.getLogger(__name__)
 
@@ -71,7 +77,7 @@ _zshenv_managed_keys: set[str] = set()
 
 # ── Environment bootstrap ─────────────────────────────────────────────────────
 # launchd does not source shell init files, so variables set in ~/.zshenv are
-# invisible to this process. Appistry itself needs almost nothing from them, but
+# invisible to this process. Roost itself needs almost nothing from them, but
 # a raven's descriptor directory can be relocated with RAVENS_STATE_DIR, and a
 # user who sets that in ~/.zshenv would otherwise find the tray looking in a
 # different place than the raven publishes to.
@@ -164,7 +170,7 @@ def _icon_kwargs() -> dict:
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-class AppistryApp(rumps.App):
+class RoostApp(rumps.App):
     """The tray. Renders rows; interprets nothing."""
 
     def __init__(self):
@@ -282,11 +288,11 @@ _HOST_LOCK = host.HostLock()
 def main() -> int:
     """Run the tray, or exit quietly if another process is already hosting."""
     if not _IS_MACOS:  # pragma: no cover - guarded by the caller
-        from windows_tray import main as windows_main
+        from roost.windows_tray import main as windows_main
 
         return windows_main()
 
-    paths.appistry_dir()
+    paths.ensure_state_dir()
     logging.getLogger().setLevel(logging.WARNING)
     _install_log_handler()
 
@@ -294,8 +300,8 @@ def main() -> int:
         if _HOST_LOCK.failure == host.UNWRITABLE:
             # Not a duplicate launch: this machine cannot host at all, and the
             # user gets no tray icon to explain it. Say so where they will see it.
-            log.error("Appistry cannot start: %s", _HOST_LOCK.reason)
-            notify("Appistry", _HOST_LOCK.reason)
+            log.error("Roost cannot start: %s", _HOST_LOCK.reason)
+            notify("Roost", _HOST_LOCK.reason)
             return 1
         return 0
 
@@ -308,7 +314,7 @@ def main() -> int:
         NSApplication.sharedApplication().setActivationPolicy_(
             NSApplicationActivationPolicyProhibited
         )
-        AppistryApp().run()
+        RoostApp().run()
         return 0
     finally:
         _HOST_LOCK.release()
@@ -318,7 +324,7 @@ def _install_log_handler() -> None:
     from logging.handlers import RotatingFileHandler
 
     handler = RotatingFileHandler(
-        paths.appistry_dir() / "menubar.log", maxBytes=512_000, backupCount=1
+        paths.ensure_state_dir() / paths.LOG_NAME, maxBytes=512_000, backupCount=1
     )
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.getLogger().addHandler(handler)

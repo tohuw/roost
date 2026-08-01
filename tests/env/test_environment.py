@@ -25,14 +25,20 @@ VENV_PYTHON = (
     if sys.platform == "win32"
     else APP_DIR / ".venv" / "bin" / "python"
 )
-PORT_FILE = Path.home() / ".appistry" / "menubar-http-port"
+sys.path.insert(0, str(APP_DIR))
+
+from roost import help_server as _help_server
+
+#: Resolved by the real module rather than restated here, so this can never drift
+#: from where production actually writes it.
+PORT_FILE = _help_server.port_file_path()
 
 # A fresh, isolated help-server instance. The module's start/shutdown are plain
 # function calls, so no signal plumbing is needed.
 _SERVER_SCRIPT = """
 import sys, time
 sys.path.insert(0, {app_dir!r})
-import help_server
+from roost import help_server
 
 port = help_server.start()
 print(f"PORT {{port}}", flush=True)
@@ -64,11 +70,10 @@ def _isolated_process_env(isolated_home: Path, *, platform: str = sys.platform) 
 
 
 def _running_instance() -> str | None:
-    """Return the URL of an already-running Appistry help server, if any.
+    """Return the URL of an already-running Roost help server, if any.
 
-    Probing first avoids clobbering the real ``~/.appistry/menubar-http-port``
-    that a live tray depends on — and the host lock means a second tray could not
-    start anyway.
+    Probing first avoids clobbering the real port file that a live tray depends
+    on — and the host lock means a second tray could not start anyway.
     """
     if not PORT_FILE.exists():
         return None
@@ -89,14 +94,14 @@ def help_server_url(tmp_path_factory):
     """Probe for a running instance first; only spawn a new one if needed.
 
     A spawned instance runs with an isolated HOME so it never touches the real
-    ``~/.appistry`` state of whatever installation is running on this machine.
+    state of whatever installation is running on this machine.
     """
     existing = _running_instance()
     if existing:
         yield existing
         return
 
-    env = _isolated_process_env(tmp_path_factory.mktemp("appistry-home"))
+    env = _isolated_process_env(tmp_path_factory.mktemp("roost-home"))
     proc = subprocess.Popen(
         [str(VENV_PYTHON), "-u", "-c", _SERVER_SCRIPT.format(app_dir=str(APP_DIR))],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
@@ -178,8 +183,8 @@ def test_the_shared_raven_layer_imports():
     result = subprocess.run(
         [str(VENV_PYTHON), "-c",
          "import sys; sys.path.insert(0, '.'); "
-         "import ravens, menu_spec, raven_client, host, icons, paths, "
-         "sanitize, tray, help_server"],
+         "from roost import ravens, menu_spec, raven_client, host, icons, "
+         "paths, sanitize, tray, help_server"],
         capture_output=True, text=True, cwd=str(APP_DIR),
     )
     assert result.returncode == 0, result.stderr.strip()
@@ -188,9 +193,9 @@ def test_the_shared_raven_layer_imports():
 def test_the_real_tray_module_imports():
     """The platform's tray entry point imports with installed dependencies."""
     modules = (
-        "import windows_support, windows_tray"
+        "from roost import windows_support, windows_tray"
         if sys.platform == "win32"
-        else "import menubar"
+        else "from roost import menubar"
     )
     result = subprocess.run(
         [str(VENV_PYTHON), "-c", modules],
@@ -202,7 +207,7 @@ def test_the_real_tray_module_imports():
 def test_the_real_tray_icon_loads():
     """The checked-in asset must actually decode: nothing rasterizes at runtime."""
     script = (
-        "import sys; sys.path.insert(0, '.'); import icons\n"
+        "import sys; sys.path.insert(0, '.'); from roost import icons\n"
         "choice = icons.resolve()\n"
         "assert choice is not None, 'no icon resolved'\n"
         "assert choice.path.is_file(), choice.path\n"
@@ -217,7 +222,7 @@ def test_the_real_tray_icon_loads():
 
 def test_cli_help_exits_zero():
     result = subprocess.run(
-        [str(VENV_PYTHON), str(APP_DIR / "appistry.py"), "--help"],
+        [str(VENV_PYTHON), "-m", "roost.cli", "--help"],
         capture_output=True, text=True, cwd=str(APP_DIR),
     )
     assert result.returncode == 0, result.stderr.strip()
@@ -228,7 +233,7 @@ def test_cli_ravens_exits_without_crash(tmp_path):
     env = _isolated_process_env(tmp_path)
     env["RAVENS_STATE_DIR"] = str(tmp_path / "ravens")
     result = subprocess.run(
-        [str(VENV_PYTHON), str(APP_DIR / "appistry.py"), "ravens"],
+        [str(VENV_PYTHON), "-m", "roost.cli", "ravens"],
         capture_output=True, text=True, cwd=str(APP_DIR), env=env,
     )
     assert result.returncode == 0, result.stderr.strip()
@@ -240,14 +245,14 @@ def test_cli_ravens_exits_without_crash(tmp_path):
 def test_server_starts_and_root_responds(help_server_url):
     status, body = _get(help_server_url)
     assert status == 200
-    assert b"Appistry Help" in body
+    assert b"Roost Help" in body
 
 
-def test_server_identifies_appistry(help_server_url):
+def test_server_identifies_roost(help_server_url):
     """Distinguishes a live tray from an unrelated service on a stale port."""
     status, body = _get(f"{help_server_url}/api/status")
     assert status == 200
-    assert json.loads(body) == {"service": "appistry", "ok": True}
+    assert json.loads(body) == {"service": "roost", "ok": True}
 
 
 def test_the_real_server_rejects_a_foreign_host(help_server_url):

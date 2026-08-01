@@ -17,8 +17,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import ravens
-import sanitize
+from roost import ravens
+from roost import sanitize
 
 
 def _payload(**overrides) -> dict:

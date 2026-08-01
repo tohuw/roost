@@ -1,9 +1,9 @@
-# Appistry
+# Roost
 
 One menu bar icon for your ravens.
 
 **Huginn** watches what your AI agents are doing right now. **Muninn** remembers
-what they did. Rather than give each one its own icon, Appistry shows both in one
+what they did. Rather than give each one its own icon, Roost shows both in one
 place — whichever of them happens to be running.
 
 ---
@@ -29,12 +29,12 @@ Muninn
 Tray icon      ▸
 Help
 ────────────────
-Quit Appistry
+Quit Roost
 ```
 
 Each raven gets its own part of the menu, and each decides what goes in it.
-Appistry draws what they send and passes your clicks straight back — so when a
-raven adds something new, it appears here without Appistry needing an update.
+Roost draws what they send and passes your clicks straight back — so when a
+raven adds something new, it appears here without Roost needing an update.
 
 - **The number beside a name** is that raven's own count of things wanting your
   attention. Zero, and it is not shown.
@@ -71,28 +71,48 @@ Common reasons, and what they mean:
 | Is not answering on its recorded port | It is starting up, or wedged. Give it a moment, then restart it. |
 | Did not answer in time | It is busy. This usually clears on its own. |
 | Rejected the credential from its own token file | It restarted and changed its key. Restarting it again normally fixes this. |
-| Needs raven API […]; this menu bar speaks […] | The raven and Appistry are too far apart in version. Update whichever is older. |
+| Needs raven API […]; this menu bar speaks […] | The raven and Roost are too far apart in version. Update whichever is older. |
 | Descriptor is not valid JSON | Its status file is damaged. Restart the raven to rewrite it. |
 
-For the same information in a terminal, run `appistry ravens`.
+For the same information in a terminal, run `roost ravens`.
 
 ---
 
 ## Quitting
 
-**Quit Appistry** closes the menu bar icon only.
+**Quit Roost** closes the menu bar icon only.
 
-Your ravens keep running. Appistry watches them; it does not run them, so closing
+Your ravens keep running. Roost watches them; it does not run them, so closing
 it never stops them — it just means nothing is showing you what they are doing.
-The icon comes back the next time you sign in, or immediately with `appistry ui`.
+The icon comes back the next time you sign in, or immediately with `roost ui`.
 
 ---
 
 ## Your data
 
-Appistry has no data of its own. It reads status from your ravens over your own
+Roost has no data of its own. It reads status from your ravens over your own
 machine's local connection, and stores nothing but your chosen icon.
 
-**Nothing leaves your computer.** Appistry makes no network requests off your
+**Nothing leaves your computer.** Roost makes no network requests off your
 machine at all — not for updates, not for analytics, not for anything. Each raven
-keeps its own key, and Appistry only ever passes a raven its own.
+keeps its own key, and Roost only ever passes a raven its own.
+
+Roost keeps its own small state — your icon choice, a lock, a log — in one
+directory of its own:
+
+- **macOS and Linux:** `~/.local/state/roost`
+- **Windows:** `%LOCALAPPDATA%\Roost`
+
+---
+
+## If you also have Appistry
+
+Roost began as a fork of a separate app launcher called **Appistry**, and the two
+are unrelated tools today. If you use both, they run side by side and neither
+interferes with the other.
+
+Roost touches only its own directory above, plus the shared folder your ravens
+publish their status into. It never reads or writes anything belonging to
+Appistry, and it installs its own `roost` command rather than replacing
+`appistry`. You can install, start, stop, or remove either one without affecting
+the other.

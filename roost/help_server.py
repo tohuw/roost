@@ -3,7 +3,7 @@
 The tray needs somewhere to put a Help page, and a menu item cannot render
 Markdown. So one short-lived loopback server renders ``help.md`` and shuts itself
 down when nobody has asked for it in a while. It also answers ``/api/status``,
-which is how ``appistry ui`` and the Windows installer tell a live tray from a
+which is how ``roost ui`` and the Windows installer tell a live tray from a
 stale port file.
 
 **This is not a proxy and must never become one.** It forwards nothing, reaches
@@ -45,14 +45,19 @@ import socketserver
 import threading
 from pathlib import Path
 
-import paths
+from roost import paths
 
 log = logging.getLogger(__name__)
 
 HERE = Path(__file__).resolve().parent
 HELP_SOURCE = HERE / "help.md"
 
-PORT_FILE_NAME = "menubar-http-port"
+#: Where the ephemeral help port is recorded. Named for this project rather than
+#: for the surface it serves: the separate internal Appistry writes a file called
+#: ``menubar-http-port`` into *its* state directory for the same purpose, and a
+#: shared filename plus a shared directory would have had each tray reading the
+#: other's port and reporting the other as "already running".
+PORT_FILE_NAME = "roost-http-port"
 
 #: Shut the server down after this long without a request. The Help page is
 #: opened once in a while, not held open, so there is no reason for a listener to
@@ -90,7 +95,7 @@ _lock = threading.RLock()
 
 
 def port_file_path() -> Path:
-    return paths.APPISTRY_DIR / PORT_FILE_NAME
+    return paths.STATE_DIR / PORT_FILE_NAME
 
 
 def _free_port() -> int:
@@ -201,7 +206,7 @@ def render_help_page(nonce: str = "") -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Appistry Help</title>
+  <title>Roost Help</title>
   <style{nonce_attr}>
     body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
            max-width: 560px; margin: 60px auto; padding: 0 24px;
@@ -271,7 +276,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             nonce = _html_nonce()
             self._html(render_help_page(nonce), nonce)
         elif path == "/api/status":
-            self._json(200, {"service": "appistry", "ok": True})
+            self._json(200, {"service": "roost", "ok": True})
         else:
             self.send_error(404)
 
@@ -317,7 +322,7 @@ def start() -> int:
             # half-written port.
             paths.atomic_write_text(port_file_path(), str(port))
             threading.Thread(
-                target=server.serve_forever, name="appistry-help", daemon=True
+                target=server.serve_forever, name="roost-help", daemon=True
             ).start()
         except Exception:
             server.server_close()
@@ -376,7 +381,7 @@ def url() -> str:
 def active_port() -> int | None:
     """Return the port recorded by a running tray, or None.
 
-    Used by ``appistry ui`` and the Windows installer to tell a live tray from a
+    Used by ``roost ui`` and the Windows installer to tell a live tray from a
     stale port file. The value is range-checked because a truncated or
     hand-edited file must not become a port number.
     """

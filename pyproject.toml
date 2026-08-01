@@ -3,7 +3,13 @@ requires = ["setuptools==83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "appistry"
+# "roost", not "appistry". The GitHub repository keeps the name it was forked
+# under, but the runtime identity does not: a separate internal tool called
+# Appistry is still in daily use on the same machines, owning the `appistry`
+# console script, ~/.appistry, and top-level `appistry`/`menubar`/`windows_*`
+# modules. A repo name and a distribution name need not match, and here they must
+# not — see the COEXISTENCE section of README.md.
+name = "roost"
 dynamic = ["version"]
 description = "One shared status menu bar for the ravens: Huginn and Muninn"
 readme = "README.md"
@@ -37,24 +43,17 @@ Issues        = "https://github.com/tohuw/appistry/issues"
 Documentation = "https://github.com/tohuw/appistry/blob/main/SPEC.md"
 
 [project.scripts]
-appistry = "appistry:main"
+roost = "roost.cli:main"
 
 [tool.setuptools]
-py-modules = [
-  "appistry",
-  "help_server",
-  "host",
-  "icons",
-  "menu_spec",
-  "menubar",
-  "paths",
-  "raven_client",
-  "ravens",
-  "sanitize",
-  "tray",
-  "windows_support",
-  "windows_tray",
-]
+# One package, no top-level modules. Installing flat `menubar`, `windows_support`,
+# and `windows_tray` modules — as this project used to, and as the internal
+# Appistry still does — means whichever distribution is installed second silently
+# overwrites the other's modules in a shared environment.
+packages = ["roost"]
+
+[tool.setuptools.package-data]
+roost = ["assets/*", "help.md"]
 
 [tool.setuptools.dynamic]
 version = {file = ["VERSION"]}

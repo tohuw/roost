@@ -1,6 +1,6 @@
 """Hermetic tests for the Windows path, shortcut, and tray-process helpers.
 
-Only two Appistry shortcuts exist now (login startup and Start Menu) because
+Only two Roost shortcuts exist now (login startup and Start Menu) because
 there are no apps to launch — the ravens start themselves. What is left worth
 pinning is that the PATH and environment plumbing normalises correctly, that the
 tray's liveness check probes rather than trusts a port file, and that stopping the
@@ -17,14 +17,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import help_server
-import paths
-import windows_support
+from roost import help_server
+from roost import paths
+from roost import windows_support
 
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
-    monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path / ".appistry")
+    monkeypatch.setattr(paths, "STATE_DIR", tmp_path / "roost")
     return tmp_path
 
 
@@ -41,9 +41,9 @@ class TestShortcuts:
             return path
 
         monkeypatch.setattr(windows_support, "_create_shortcut", create)
-        appistry_dir = tmp_path / "Appistry Home"
+        repo_dir = tmp_path / "Roost Home"
 
-        startup, menu = windows_support.install_appistry_shortcuts(appistry_dir)
+        startup, menu = windows_support.install_shortcuts(repo_dir)
 
         assert startup == captured[0]["path"]
         assert menu == captured[1]["path"]
@@ -51,10 +51,16 @@ class TestShortcuts:
             # pythonw.exe, not python.exe: a console window flashing at sign-in
             # is the difference between a tray app and a startup annoyance.
             assert entry["target"] == (
-                appistry_dir / ".venv" / "Scripts" / "pythonw.exe"
+                repo_dir / ".venv" / "Scripts" / "pythonw.exe"
             )
-            assert str(appistry_dir / "windows_tray.py") in entry["arguments"]
-            assert entry["working_directory"] == appistry_dir
+            # -m roost.windows_tray, not a path to windows_tray.py: the tray is
+            # a package module, and the dotted name is also what keeps this
+            # project's PID verification from ever matching the other Appistry's
+            # identically-named tray file.
+            assert "-m" in entry["arguments"]
+            assert windows_support.TRAY_MODULE in entry["arguments"]
+            assert "windows_tray.py" not in entry["arguments"]
+            assert entry["working_directory"] == repo_dir
 
     def test_the_startup_shortcut_lands_in_the_startup_folder(self, tmp_path, monkeypatch):
         monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
@@ -73,17 +79,17 @@ class TestShortcuts:
     def test_uninstall_removes_both_shortcuts(self, tmp_path, monkeypatch):
         monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
         for path in (
-            windows_support.startup_dir() / "Appistry.lnk",
-            windows_support.appistry_shortcuts_dir() / "Appistry.lnk",
+            windows_support.startup_dir() / "Roost.lnk",
+            windows_support.shortcuts_dir() / "Roost.lnk",
         ):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("shortcut", encoding="utf-8")
 
         windows_support.uninstall_shortcuts()
 
-        assert not (windows_support.startup_dir() / "Appistry.lnk").exists()
+        assert not (windows_support.startup_dir() / "Roost.lnk").exists()
         assert not (
-            windows_support.appistry_shortcuts_dir() / "Appistry.lnk"
+            windows_support.shortcuts_dir() / "Roost.lnk"
         ).exists()
 
     def test_an_ico_tray_icon_is_used_directly(self, monkeypatch, tmp_path):
@@ -92,7 +98,7 @@ class TestShortcuts:
         monkeypatch.setattr(
             windows_support, "prepare_tray_icon", windows_support.prepare_tray_icon
         )
-        import icons
+        from roost import icons
 
         monkeypatch.setattr(icons, "resolve", lambda: icons.IconChoice(
             "raven", icon, template=False, builtin=True
@@ -103,7 +109,7 @@ class TestShortcuts:
         """A default-looking shortcut icon beats a tray that never starts."""
         source = tmp_path / "raven.png"
         source.write_bytes(b"not really a png")
-        import icons
+        from roost import icons
 
         monkeypatch.setattr(icons, "resolve", lambda: icons.IconChoice(
             "raven", source, template=False, builtin=True
@@ -111,7 +117,7 @@ class TestShortcuts:
         assert windows_support.prepare_tray_icon() is None
 
     def test_no_resolvable_icon_yields_none(self, monkeypatch):
-        import icons
+        from roost import icons
 
         monkeypatch.setattr(icons, "resolve", lambda: None)
         assert windows_support.prepare_tray_icon() is None
@@ -121,37 +127,37 @@ class TestShortcuts:
 
 class TestEnvironment:
     def test_path_contains_matches_a_normalised_entry(self, tmp_path):
-        bin_dir = tmp_path / "Appistry" / "Scripts"
+        bin_dir = tmp_path / "Roost" / "Scripts"
         value = str(tmp_path / "other") + windows_support.os.pathsep + str(bin_dir)
         assert windows_support._path_contains(value, bin_dir) is True
 
     def test_path_contains_ignores_an_unrelated_entry(self, tmp_path):
-        bin_dir = tmp_path / "Appistry" / "Scripts"
+        bin_dir = tmp_path / "Roost" / "Scripts"
         assert windows_support._path_contains(str(tmp_path / "other"), bin_dir) is False
 
     def test_path_contains_sees_through_quotes_and_whitespace(self, tmp_path):
         """A PATH entry written by hand often arrives quoted and padded."""
-        bin_dir = tmp_path / "Appistry" / "Scripts"
+        bin_dir = tmp_path / "Roost" / "Scripts"
         assert windows_support._path_contains(f'  "{bin_dir}"  ', bin_dir) is True
 
     def test_path_contains_normalises_a_trailing_separator(self, tmp_path):
-        bin_dir = tmp_path / "Appistry" / "Scripts"
+        bin_dir = tmp_path / "Roost" / "Scripts"
         assert windows_support._path_contains(f"{bin_dir}{os.sep}", bin_dir) is True
 
     def test_refresh_tracks_an_updated_user_value(self, monkeypatch):
         monkeypatch.setattr(windows_support, "is_windows", lambda: True)
         monkeypatch.setattr(windows_support, "_read_registry_environment",
-                            lambda: {"APPISTRY_TEST_SETTING": "first"})
+                            lambda: {"ROOST_TEST_SETTING": "first"})
         monkeypatch.setattr(windows_support, "_read_registry_path", lambda: "")
-        monkeypatch.setenv("APPISTRY_TEST_SETTING", "first")
+        monkeypatch.setenv("ROOST_TEST_SETTING", "first")
         windows_support._managed_environment.clear()
 
         windows_support.refresh_user_environment()
         monkeypatch.setattr(windows_support, "_read_registry_environment",
-                            lambda: {"APPISTRY_TEST_SETTING": "updated"})
+                            lambda: {"ROOST_TEST_SETTING": "updated"})
         windows_support.refresh_user_environment()
 
-        assert windows_support.os.environ["APPISTRY_TEST_SETTING"] == "updated"
+        assert windows_support.os.environ["ROOST_TEST_SETTING"] == "updated"
 
     def test_refresh_picks_up_a_relocated_descriptor_directory(self, monkeypatch):
         """RAVENS_STATE_DIR set after startup must reach the running tray, or it
@@ -221,7 +227,7 @@ class TestTrayIsRunning:
         monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: Response())
         assert windows_support.tray_is_running() is False
 
-    def test_the_appistry_status_payload_means_running(self, monkeypatch):
+    def test_the_roost_status_payload_means_running(self, monkeypatch):
         help_server.port_file_path().parent.mkdir(parents=True, exist_ok=True)
         help_server.port_file_path().write_text("54321", encoding="utf-8")
 
@@ -233,7 +239,7 @@ class TestTrayIsRunning:
                 return False
 
             def read(self, _limit):
-                return b'{"service":"appistry","ok":true}'
+                return b'{"service":"roost","ok":true}'
 
         import urllib.request
 
@@ -341,13 +347,33 @@ class TestStopTray:
         windows_support.tray_pid_path().write_text("4321", encoding="utf-8")
         process = self._psutil(
             monkeypatch,
-            cmdline=[r"C:\Appistry\.venv\Scripts\pythonw.exe",
-                     r"C:\Appistry\windows_tray.py"],
+            cmdline=[r"C:\Roost\.venv\Scripts\pythonw.exe",
+                     "-m", windows_support.TRAY_MODULE],
         )
 
         assert windows_support.stop_tray() is True
         process.terminate.assert_called_once_with()
         assert windows_support.tray_pid_path().exists() is False
+
+    def test_the_other_appistrys_tray_is_never_signalled(self, monkeypatch):
+        """A PID naming the separate internal Appistry's tray must not match.
+
+        Both projects ship a file called ``windows_tray.py``. If this check still
+        looked for that bare filename, a recycled PID landing in our PID file
+        could have terminated the internal tool's tray — and its own check,
+        which does look for the bare filename, would never match our ``-m
+        roost.windows_tray`` command line. The asymmetry is the point.
+        """
+        windows_support.tray_pid_path().parent.mkdir(parents=True, exist_ok=True)
+        windows_support.tray_pid_path().write_text("4321", encoding="utf-8")
+        process = self._psutil(
+            monkeypatch,
+            cmdline=[r"C:\Appistry\.venv\Scripts\pythonw.exe",
+                     r"C:\Appistry\windows_tray.py"],
+        )
+
+        assert windows_support.stop_tray() is False
+        process.terminate.assert_not_called()
 
     def test_without_psutil_nothing_is_signalled(self, monkeypatch):
         """No way to verify the PID means no signal, not a hopeful one."""

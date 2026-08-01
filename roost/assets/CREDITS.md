@@ -21,7 +21,7 @@ This is a licence obligation, not a courtesy. If the raven art is removed from
 this repository, remove this section with it; if another icon is added, credit it
 here before shipping.
 
-## `appistry.png` and `appistry-template.png`
+## `roost.png` and `roost-template.png`
 
-Appistry's own mark. Copyright 2026 Ron Scott-Adams, licensed under the same
-Apache-2.0 terms as the rest of this repository — see [`../LICENSE`](../LICENSE).
+Roost's own mark. Copyright 2026 Ron Scott-Adams, licensed under the same
+Apache-2.0 terms as the rest of this repository — see [`../../LICENSE`](../../LICENSE).

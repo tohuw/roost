@@ -22,13 +22,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import help_server
-import paths
+from roost import help_server
+from roost import paths
 
 
 @pytest.fixture
 def server(monkeypatch, tmp_path):
-    monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path)
+    monkeypatch.setattr(paths, "STATE_DIR", tmp_path)
     try:
         yield help_server.start()
     finally:
@@ -173,13 +173,13 @@ class TestResponseHeaders:
         _s2, h2, _b2 = _request(server, "/")
         assert h1["content-security-policy"] != h2["content-security-policy"]
 
-    def test_the_status_route_identifies_appistry(self, server):
+    def test_the_status_route_identifies_roost(self, server):
         import json
 
         status, headers, body = _request(server, "/api/status")
         assert status == 200
         assert headers["x-content-type-options"] == "nosniff"
-        assert json.loads(body) == {"service": "appistry", "ok": True}
+        assert json.loads(body) == {"service": "roost", "ok": True}
 
     def test_responses_are_not_cached(self, server):
         _status, headers, _body = _request(server, "/")
@@ -231,7 +231,7 @@ class TestRendering:
         documented in the copy that is actually served."""
         page = help_server.render_help_page()
         assert "Not running" in page
-        assert "appistry ravens" in page
+        assert "roost ravens" in page
 
     def test_the_page_renders_under_a_legacy_default_encoding(self, monkeypatch):
         real_read_text = Path.read_text
@@ -289,39 +289,39 @@ class TestPortFile:
         assert mode == 0o600, oct(mode)
 
     def test_shutdown_removes_the_port_file(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path)
+        monkeypatch.setattr(paths, "STATE_DIR", tmp_path)
         help_server.start()
         help_server.shutdown()
         assert help_server.port_file_path().exists() is False
 
     def test_a_foreign_port_file_is_left_alone(self, monkeypatch, tmp_path):
         """Another instance's port file must not be deleted by our shutdown."""
-        monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path)
+        monkeypatch.setattr(paths, "STATE_DIR", tmp_path)
         help_server.start()
         help_server.port_file_path().write_text("65000", encoding="utf-8")
         help_server.shutdown()
         assert help_server.port_file_path().read_text(encoding="utf-8") == "65000"
 
     def test_active_port_reads_the_recorded_port(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path)
+        monkeypatch.setattr(paths, "STATE_DIR", tmp_path)
         help_server.port_file_path().write_text("54321", encoding="utf-8")
         assert help_server.active_port() == 54321
 
     @pytest.mark.parametrize("content", ["", "0", "-1", "70000", "not-a-port"])
     def test_active_port_rejects_junk(self, monkeypatch, tmp_path, content):
-        monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path)
+        monkeypatch.setattr(paths, "STATE_DIR", tmp_path)
         help_server.port_file_path().write_text(content, encoding="utf-8")
         assert help_server.active_port() is None
 
     def test_active_port_when_no_file_exists(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path)
+        monkeypatch.setattr(paths, "STATE_DIR", tmp_path)
         assert help_server.active_port() is None
 
     def test_start_is_idempotent(self, server, monkeypatch, tmp_path):
         assert help_server.start() == server
 
     def test_start_creates_a_missing_state_directory(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path / "fresh" / ".appistry")
+        monkeypatch.setattr(paths, "STATE_DIR", tmp_path / "fresh" / "roost")
         try:
             port = help_server.start()
             assert help_server.port_file_path().read_text(encoding="utf-8") == str(port)

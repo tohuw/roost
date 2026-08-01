@@ -86,19 +86,19 @@ class _FakePystray:
     MenuItem = _PystrayMenuItem
 
 
-import host
-import icons
-import menu_spec
-import menubar
-import ravens
-import tray
-import windows_tray
-from tray import RowKind
+from roost import host
+from roost import icons
+from roost import menu_spec
+from roost import menubar
+from roost import ravens
+from roost import tray
+from roost import windows_tray
+from roost.tray import RowKind
 
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
-    monkeypatch.setattr(icons.paths, "APPISTRY_DIR", tmp_path)
+    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path)
     return tmp_path
 
 
@@ -126,7 +126,7 @@ def _live(name, *labels, badge=0, style="normal", detail=""):
 
 
 def _macos_menu(model):
-    app = menubar.AppistryApp.__new__(menubar.AppistryApp)
+    app = menubar.RoostApp.__new__(menubar.RoostApp)
     app.menu = _RumpsMenu()
     app.icon = None
     app.template = None
@@ -138,8 +138,8 @@ def _macos_menu(model):
 
 
 def _windows_menu(model):
-    instance = windows_tray.AppistryWindowsTray.__new__(
-        windows_tray.AppistryWindowsTray
+    instance = windows_tray.RoostWindowsTray.__new__(
+        windows_tray.RoostWindowsTray
     )
     instance._pystray = _FakePystray
     instance._signature = None

@@ -1,7 +1,7 @@
 """Windows installation, startup, environment, and tray helpers.
 
 What is left here is only what a *status* tray needs: install and remove the two
-Appistry shortcuts (login startup and Start Menu), keep the process's environment
+Roost shortcuts (login startup and Start Menu), keep the process's environment
 in step with the user's Environment registry values, and start or stop the tray
 process. There are no per-app shortcuts and no icon conversion for them, because
 there are no apps to launch — the ravens are long-running daemons that publish
@@ -21,11 +21,24 @@ import sys
 import time
 from pathlib import Path
 
-import help_server
-import paths
+from roost import help_server
+from roost import paths
 
-_STARTUP_SHORTCUT = "Appistry.lnk"
+_STARTUP_SHORTCUT = "Roost.lnk"
 _TRAY_PID_FILE = "windows-tray.pid"
+
+#: How the tray process is launched, and therefore the token ``stop_tray`` looks
+#: for in a candidate command line.
+#:
+#: ``-m roost.windows_tray`` rather than a path to ``windows_tray.py`` does double
+#: duty. It is required — the tray is a package module now — and it also makes the
+#: PID verification here mutually exclusive with the separate internal Appistry's,
+#: which looks for a bare ``windows_tray.py`` argument. Both projects ship a file
+#: by that name, so a recycled PID landing in either tool's PID file could
+#: otherwise have made one terminate the other's tray. Neither tool's check
+#: matches the other's command line now.
+TRAY_MODULE = "roost.windows_tray"
+_TRAY_ARGV = ("-m", TRAY_MODULE)
 _WINDOWS_CREATE_FLAGS = (
     getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     | getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -57,12 +70,12 @@ def startup_dir() -> Path:
     return start_menu_programs_dir() / "Startup"
 
 
-def appistry_shortcuts_dir() -> Path:
-    return start_menu_programs_dir() / "Appistry"
+def shortcuts_dir() -> Path:
+    return start_menu_programs_dir() / "Roost"
 
 
 def tray_pid_path() -> Path:
-    return paths.APPISTRY_DIR / _TRAY_PID_FILE
+    return paths.STATE_DIR / _TRAY_PID_FILE
 
 
 def write_tray_pid() -> None:
@@ -76,9 +89,9 @@ def write_tray_pid() -> None:
     paths.atomic_write_text(tray_pid_path(), str(os.getpid()))
 
 
-def _venv_executable(appistry_dir: Path, *, windowed: bool = False) -> Path:
+def _venv_executable(repo_dir: Path, *, windowed: bool = False) -> Path:
     name = "pythonw.exe" if windowed else "python.exe"
-    return appistry_dir / ".venv" / "Scripts" / name
+    return repo_dir / ".venv" / "Scripts" / name
 
 
 def _shortcut_arguments(parts: list[str]) -> str:
@@ -112,25 +125,25 @@ def _create_shortcut(
     return path
 
 
-def install_appistry_shortcuts(appistry_dir: Path) -> tuple[Path, Path]:
+def install_shortcuts(repo_dir: Path) -> tuple[Path, Path]:
     """Install the login-start and Start Menu shortcuts for the tray."""
-    target = _venv_executable(appistry_dir, windowed=True)
-    args = _shortcut_arguments([str(appistry_dir / "windows_tray.py")])
+    target = _venv_executable(repo_dir, windowed=True)
+    args = _shortcut_arguments(list(_TRAY_ARGV))
     icon = prepare_tray_icon()
     startup = _create_shortcut(
         startup_dir() / _STARTUP_SHORTCUT,
         target=target,
         arguments=args,
-        working_directory=appistry_dir,
-        description="Start Appistry when you sign in",
+        working_directory=repo_dir,
+        description="Start Roost when you sign in",
         icon=icon,
     )
     menu = _create_shortcut(
-        appistry_shortcuts_dir() / _STARTUP_SHORTCUT,
+        shortcuts_dir() / _STARTUP_SHORTCUT,
         target=target,
         arguments=args,
-        working_directory=appistry_dir,
-        description="Open Appistry",
+        working_directory=repo_dir,
+        description="Open Roost",
         icon=icon,
     )
     return startup, menu
@@ -144,14 +157,14 @@ def prepare_tray_icon() -> Path | None:
     Python icon is a cosmetic problem, while refusing to create the shortcut
     would mean the tray never starts at login.
     """
-    import icons
+    from roost import icons
 
     choice = icons.resolve()
     if choice is None:
         return None
     if choice.path.suffix.lower() == ".ico":
         return choice.path
-    destination = paths.appistry_dir() / "tray-icon.ico"
+    destination = paths.ensure_state_dir() / "tray-icon.ico"
     try:
         from PIL import Image
 
@@ -173,12 +186,12 @@ def prepare_tray_icon() -> Path | None:
 
 def uninstall_shortcuts() -> None:
     (startup_dir() / _STARTUP_SHORTCUT).unlink(missing_ok=True)
-    (appistry_shortcuts_dir() / _STARTUP_SHORTCUT).unlink(missing_ok=True)
+    (shortcuts_dir() / _STARTUP_SHORTCUT).unlink(missing_ok=True)
     try:
-        appistry_shortcuts_dir().rmdir()
+        shortcuts_dir().rmdir()
     except OSError:
-        log.debug("Appistry Start Menu folder is not empty", exc_info=True)
-    (paths.APPISTRY_DIR / "tray-icon.ico").unlink(missing_ok=True)
+        log.debug("Roost Start Menu folder is not empty", exc_info=True)
+    (paths.STATE_DIR / "tray-icon.ico").unlink(missing_ok=True)
 
 
 # ── User PATH and environment ─────────────────────────────────────────────────
@@ -215,7 +228,7 @@ def _broadcast_environment_change() -> None:
 
 
 def add_cli_dir_to_user_path(bin_dir: Path) -> bool:
-    """Add Appistry's venv Scripts directory to the current user's PATH."""
+    """Add Roost's venv Scripts directory to the current user's PATH."""
     _require_windows()
     import winreg
 
@@ -333,7 +346,7 @@ def tray_is_running() -> bool:
     """Return True if a tray process is answering on its recorded help port.
 
     The port file alone proves nothing — a crashed tray leaves it behind — so the
-    endpoint is actually probed, and the reply must identify Appistry rather than
+    endpoint is actually probed, and the reply must identify Roost rather than
     whatever unrelated service inherited the port.
     """
     import json
@@ -349,22 +362,23 @@ def tray_is_running() -> bool:
             f"http://127.0.0.1:{port}/api/status", timeout=0.5
         ) as response:
             payload = json.loads(response.read(1024))
-        return payload == {"service": "appistry", "ok": True}
+        return payload == {"service": "roost", "ok": True}
     except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError):
         return False
 
 
-def start_tray(appistry_dir: Path, *, wait: bool = True) -> bool:
+def start_tray(repo_dir: Path, *, wait: bool = True) -> bool:
     """Start the Windows tray without a console window."""
     _require_windows()
     if tray_is_running():
         return True
-    target = _venv_executable(appistry_dir, windowed=True)
+    target = _venv_executable(repo_dir, windowed=True)
     try:
-        # Both paths derive from this trusted installation directory.
+        # The interpreter path derives from this trusted installation directory,
+        # and cwd is what makes the package importable under -m.
         proc = subprocess.Popen(
-            [str(target), str(appistry_dir / "windows_tray.py")],
-            cwd=str(appistry_dir),
+            [str(target), *_TRAY_ARGV],
+            cwd=str(repo_dir),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -404,7 +418,7 @@ def _terminate_spawned_process(proc) -> None:
 
 
 def stop_tray() -> bool:
-    """Stop only a verified Appistry tray process.
+    """Stop only a verified Roost tray process.
 
     The PID comes from a file, so it is not trusted: the command line is checked
     before anything is signalled. A PID file is also the one place a recycled PID
@@ -436,7 +450,9 @@ def stop_tray() -> bool:
         # exercisable by the shared unit suite, which is the point of the
         # module's platform-neutral logic.
         command = [ntpath.basename(part).casefold() for part in proc.cmdline()]
-        if "windows_tray.py" not in command:
+        # The dotted module name, not a bare filename: see TRAY_MODULE. This is
+        # what keeps the check from ever matching the other Appistry's tray.
+        if TRAY_MODULE not in command:
             path.unlink(missing_ok=True)
             return False
         proc.terminate()

@@ -18,8 +18,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import raven_client
-import ravens
+from roost import raven_client
+from roost import ravens
 
 
 class _Recorder(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -190,7 +190,7 @@ class TestTokenIsolation:
             second.close()
 
     def test_no_token_path_means_no_credential(self, raven, tmp_path):
-        """Appistry never mints a credential on a raven's behalf."""
+        """Roost never mints a credential on a raven's behalf."""
         raven_client.fetch_menu(_descriptor(raven.port, tmp_path))
         headers = json.dumps(raven.requests[-1]["headers"]).lower()
         assert "token" not in headers
