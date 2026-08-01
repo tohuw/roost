@@ -1,574 +1,530 @@
-# Appistry Integration Spec
+# The Raven Protocol
 
-**Version:** 1.0
-**Audience:** Developers of apps that want to register with Appistry
+**Protocol version:** 1
+**Appistry speaks:** 1..1
+**Audience:** anyone implementing a raven
 
----
+This is the contract between Appistry — one shared status menu bar — and a
+*raven*: a long-running local daemon that reports status into that menu.
+[Huginn](https://github.com/tohuw/huginn) and
+[Muninn](https://github.com/tohuw/muninn) both implement it. Nothing here is
+specific to either.
 
-## What Appistry Is
-
-Appistry is a local app registry and native macOS/Windows tray manager for developer tools that
-run as local web servers. It provides:
-
-- A persistent registry at `~/.appistry/registry.toml`
-- A CLI (`appistry`) for registering, starting, stopping, and opening apps
-- A macOS menu bar or Windows system tray app that surfaces registered apps and manages their processes
-- A branded launch page that opens immediately and redirects when the app is ready
-- A stable loopback hook proxy for browser-return flows that need a fixed URL
-- Auto-start via launchd on macOS or the current user's Startup folder on Windows
-
-Apps integrate with Appistry by calling the CLI. Appistry has no knowledge of any
-specific app — it is told what to do via registration.
+Two runnable reference implementations live in [`examples/`](examples/). They are
+documentation, not libraries: Appistry does not import them and neither raven
+does. Read them alongside this document — where the two disagree, the code in
+`examples/` is the one that has been executed.
 
 ---
 
-## Registry Format
+## Contents
 
-Appistry maintains `~/.appistry/registry.toml`. Implementors never write this file
-directly — use the CLI. It is documented here for transparency only.
-
-```toml
-[[apps]]
-id           = "notekeeper"
-name         = "Notekeeper"
-cwd          = "/Users/alice/Projects/Notekeeper"
-command      = ".venv/bin/python ui/server.py"
-port         = 8000
-github_url   = "https://github.com/example/notekeeper"
-icon         = "ui/static/notekeeper-logo.png"   # relative to cwd; optional
-registered_at = "2026-03-27T11:00:00"
-```
-
-Fields:
-
-| Field           | Required | Description                                                  |
-|-----------------|----------|--------------------------------------------------------------|
-| `id`            | yes      | Lowercase slug, auto-derived from `name` if omitted          |
-| `name`          | yes      | Display name shown in the desktop tray menu                  |
-| `cwd`           | yes      | Absolute path to the project root; commands run from here    |
-| `command`       | yes      | Argv-style command to start the server, relative to `cwd`    |
-| `port`          | yes      | Port the server listens on                                   |
-| `github_url`    | yes      | HTTPS GitHub URL, resolved from the repo's `origin` remote  |
-| `icon`          | no       | Path to a browser-renderable icon, relative to `cwd`         |
-| `registered_at` | auto     | ISO 8601 timestamp set by `appistry register`                |
-
-The icon should be PNG, JPEG, GIF, WebP, or ICO for the browser launch page. PNG
-is preferred because it converts cleanly into macOS app-bundle and Windows shortcut icons.
-
-`name` must be non-empty, at most 200 characters, and free of control characters —
-it is written into `registry.toml` and used as a filesystem-visible bundle name.
-`cwd` must be an absolute path and must not be the filesystem root: it anchors the
-containment check for relative executables and it is the target of the git-aware
-cleanup that runs when an app's launcher is deleted.
-
-### How `command` is validated
-
-`command` is split into an argv list and launched with `shell=False` — it is never
-handed to a shell. Appistry additionally rejects a bare interpreter (`bash`, `python`)
-with no arguments, Windows `.bat`/`.cmd` launchers, relative executables that escape
-`cwd`, and arguments that pass code to an interpreter (`-c`, `--command`, `/c`, `/k`).
-
-**These checks are not a security boundary.** A registered `command` is trusted as the
-user: anything that can write `registry.toml` already runs code as that user, so there
-is no privilege to escalate. The checks exist to catch mistakes and to make one class
-of accident loud — a registered entry that funnels arbitrary text through a shell,
-which would quietly defeat the argv-list launch model. The list is deliberately not
-exhaustive; do not rely on it to contain a hostile registry.
+1. [The shape of the protocol](#1-the-shape-of-the-protocol)
+2. [The descriptor](#2-the-descriptor)
+3. [Version compatibility](#3-version-compatibility)
+4. [The menu](#4-the-menu)
+5. [Actions and links](#5-actions-and-links)
+6. [Token isolation](#6-token-isolation)
+7. [Host election](#7-host-election)
+8. [Liveness and unavailability](#8-liveness-and-unavailability)
+9. [What the host requires of your HTTP surface](#9-what-the-host-requires-of-your-http-surface)
+10. [A raven's checklist](#10-a-ravens-checklist)
 
 ---
 
-## CLI Contract
+## 1. The shape of the protocol
 
-All commands exit `0` on success. Non-zero exits are described per command.
+Three moving parts, and no central authority:
 
-```
-appistry register   --name NAME --cwd PATH --command CMD --port PORT [--icon PATH] [--id ID]
-appistry unregister ID
-appistry list
-appistry start      ID
-appistry stop       ID
-appistry open       ID
-appistry launch     ID
-appistry hook-url   ID /app/local/path
-appistry migrate
-appistry install
-appistry uninstall
-appistry ui
-```
+1. A raven **publishes a descriptor** — one small JSON file in a shared
+   directory, naming its port, its PID, and where its token lives.
+2. The host **discovers descriptors** by listing that directory, validates each
+   one, and checks that the process it names is alive.
+3. For each live raven the host **fetches a menu** over loopback and renders it.
 
-### `register`
+There is no registry a raven writes through, so no raven can corrupt another's
+entry and a raven that is not running simply has no file. There is no
+configuration listing known ravens, so adding one is a matter of publishing a
+descriptor.
 
-Adds an entry to the registry. Idempotent: re-registering with the same `id` updates
-the existing entry rather than erroring. Prints `Registered: {id}` on success.
+The rule that makes this hold together:
 
-**Requires a GitHub remote.** Registration fails if the project at `--cwd` has no
-`origin` remote pointing to GitHub. This ensures every registered app has a discoverable
-source and enables the GitHub ↗ menu action.
+> **The host renders a raven's menu without interpreting it.**
+>
+> It draws the labels a raven sends and hands the action ids back to the raven
+> that published them. It does not know what any id means, it has no special case
+> for any raven's name, and it never decides what a raven's menu should contain.
 
-Exit codes:
-- `0` registered or updated
-- `1` invalid arguments or no GitHub remote found
-
-### `unregister`
-
-Removes an app from the registry. If the app is running, stops it first.
-
-Exit codes:
-- `0` removed
-- `1` id not found
-
-### `list`
-
-Prints a human-readable table of all registered apps and their current state
-(`running` / `stopped`). Suitable for terminal display; not machine-parseable.
-For scripting, inspect `~/.appistry/registry.toml` directly.
-
-### `start` / `stop` / `open` / `launch`
-
-`start` — spawns the app's command as a background subprocess, writes the PID to
-`~/.appistry/pids/{id}.pid`.
-
-`stop` — on macOS, sends SIGTERM to the PID, waits up to 5 seconds, then SIGKILL
-if needed. On Windows, terminates the recorded process tree, waits up to 5 seconds,
-then kills any survivors. Removes the PID file on both platforms.
-
-`open` — opens the Appistry launch page when the menu bar control server is
-available, otherwise opens `http://localhost:{port}` directly. Does not start the
-server if it is not already running.
-
-`launch` — opens the readiness page and starts the app when it is stopped. Native
-per-app launchers use this command.
-
-`hook-url` — prints a stable local Appistry proxy URL for an app-local path. For
-example, `appistry hook-url demo-app /api/oauth/callback` prints:
-
-```text
-http://127.0.0.1:47658/hooks/demo-app/api/oauth/callback
-```
-
-The app must already be registered. The target path must be local to the app; absolute
-URLs are rejected.
-
-Exit codes for start/stop/open/launch/hook-url:
-- `0` success
-- `1` id not found
-- `2` already in the requested state (start when running, stop when stopped)
-
-### `migrate`
-
-Brings all registry entries up to the current Appistry spec. Currently backfills
-`github_url` for apps registered before that field was introduced. Safe to re-run;
-entries that are already current are skipped. Exits `1` if any entry could not be
-migrated (e.g. its repo no longer has a GitHub remote).
-
-### `install`
-
-Performs first-time setup. On macOS it:
-
-1. Creates a virtualenv at `<appistry_dir>/.venv` if absent
-2. Installs Python dependencies (`rumps` and any others)
-3. Writes `~/Library/LaunchAgents/com.appistry.menubar.plist`
-4. Calls `launchctl load` on the plist
-5. Starts the menu bar app immediately (so the user sees it without logging out)
-
-Prints `Appistry installed and running.` on success. Safe to re-run; existing
-installs are detected and skipped unless `--force` is passed.
-
-On Windows it creates `<appistry_dir>\.venv`, installs the pinned runtime and
-the `appistry.exe` console entry point, adds the venv's `Scripts` directory to
-the current user's `PATH`, creates Appistry login/Start Menu shortcuts, rebuilds
-registered-app shortcuts, and starts the system tray immediately. Windows support
-requires Python 3.10 or newer.
-
-### `uninstall`
-
-Stops the tray app and all Appistry-managed child processes, removes platform login
-startup and CLI integration, and removes Windows Start Menu shortcuts when applicable.
-It does not touch the registry or project data.
-
-### `ui`
-
-Starts the native tray UI via launchd on macOS or detached `pythonw.exe` on Windows.
-If the process is already running, prints a message and exits `0`.
+That is why a raven can change its own menu — add a section, rename a row, expose
+a new action — with no change to Appistry and no version bump. Anything that would
+require the host to understand a raven's data does not belong in this protocol.
 
 ---
 
-## Launch Readiness Page
+## 2. The descriptor
 
-When a user opens a registered app from the Appistry menu, Appistry opens a local
-launch page immediately instead of waiting silently for the app server. The page shows
-the app name, icon or initials, and readiness state. It polls Appistry, not the app
-directly; Appistry rereads the registry, probes the current `127.0.0.1:{port}` HTTP
-endpoint, and redirects the browser once the endpoint responds.
+### Where it goes
 
-This page is owned by Appistry. Apps do not implement their own splash page. Apps do
-have to provide reliable launch metadata:
+One file per raven, named `{name}.json`, in a directory resolved by this rule —
+**in this order**:
 
-- Call `register(port=actual_port)` on startup after choosing the real port.
-- Keep `APP_ICON` pointed at a browser-renderable relative path when an icon exists.
-- Bind the web server to loopback and respond on the registered port once ready.
-- If the process was launched by Appistry, do not open a second raw browser tab.
+1. `$RAVENS_STATE_DIR`, if set and non-empty.
+2. **Windows:** `%LOCALAPPDATA%\Ravens`, falling back to
+   `~\AppData\Local\Ravens` when `LOCALAPPDATA` is unset.
+3. **POSIX:** `$XDG_STATE_HOME/ravens`, falling back to `~/.local/state/ravens`.
 
-Appistry sets these environment variables for spawned app processes:
+Every participant must implement this identically. A raven that resolves it
+differently publishes where the host is not looking, and the failure is silent —
+an empty menu with nothing to explain it.
 
-| Variable             | Value                         | Purpose                                |
-|----------------------|-------------------------------|----------------------------------------|
-| `APPISTRY_LAUNCHED`  | `1`                           | Suppress app-owned browser auto-open   |
-| `APPISTRY_APP_ID`    | The registry id for the app   | Optional diagnostics and logging       |
+Two details are easy to get wrong:
 
-Apps that can also be launched directly from a terminal may still open their own
-browser tab when `APPISTRY_LAUNCHED` is absent.
+- **`XDG_STATE_HOME` is not optional**, even if your own state directory ignores
+  it. This directory is shared; putting it somewhere the other participant does
+  not expect breaks discovery for both.
+- **Windows is not an afterthought.** A hardcoded POSIX path breaks it outright.
 
-The menu bar control server writes its current port to
-`~/.appistry/menubar-http-port`. Consumers such as `appistry open` and any
-catalog app may use this to prefer `http://127.0.0.1:{control_port}/launch/{app_id}`
-and fall back to the raw app URL if the control server is unavailable.
+### The fields
 
-## Stable Hook Proxy
-
-Some local apps need a fixed browser-return URL even though their own web server port
-changes at startup. OAuth integrations are the common case: the provider requires a
-registered redirect URI, but the app chooses a free local port and re-registers that
-port with Appistry on each launch.
-
-Appistry starts a stable loopback proxy with the menu bar app. By default it listens on
-`127.0.0.1:47658`; set `APPISTRY_HOOK_PORT` before launching Appistry to use a different
-fixed port. The active hook port is also written to `~/.appistry/stable-hook-port`.
-
-Hook URLs have this shape:
-
-```text
-http://127.0.0.1:{hook_port}/hooks/{app_id}/{app-local-path}
+```json
+{
+  "api_version": 1,
+  "min_api": 1,
+  "max_api": 1,
+  "name": "huginn",
+  "display": "Huginn",
+  "pid": 41213,
+  "port": 56713,
+  "started": 1785315600.482,
+  "host_priority": 100,
+  "token_path": "/Users/alice/.local/state/ravens/huginn.token",
+  "token_header": "X-Huginn-Token",
+  "endpoints": {
+    "menu": "/api/menu",
+    "action": "/api/menu/action"
+  }
+}
 ```
 
-The proxy strips `/hooks/{app_id}` and forwards the request to the app's current
-registered loopback port, preserving the method, query string, and body. Redirect
-responses are relayed back to the browser instead of followed server-side. For example:
+| Field | Required | Type | Meaning and constraints |
+|---|---|---|---|
+| `api_version` | yes | int | The protocol version you primarily speak. `1..101`. |
+| `min_api` | no | int | Oldest version you accept. Defaults to `api_version`. |
+| `max_api` | no | int | Newest version you accept. Defaults to `api_version`. |
+| `name` | yes | string | Your slug: `[a-z0-9][a-z0-9-]{0,31}`. **Must equal the filename stem.** |
+| `display` | no | string | Menu name, ≤64 chars. Defaults to `name`. |
+| `pid` | yes | int | Your process id. Must be `> 0`. |
+| `port` | yes | int | Your loopback port, `1..65535`. |
+| `started` | no | number | Your process start time, epoch seconds. **Supply it** — see [§8](#8-liveness-and-unavailability). |
+| `host_priority` | no | int | Menu ordering, `-1000..1000`. Higher sorts earlier. Defaults to `0`. |
+| `token_path` | no | string | Absolute path to your token file. Omit if you accept unauthenticated requests. |
+| `token_header` | no | string | Header your token is presented in. A valid RFC 7230 token, ≤64 chars. Defaults to `X-{Name}-Token`. |
+| `endpoints` | no | object | Path map. ≤12 entries; keys `[a-z][a-z0-9_]{0,31}`. |
 
-```text
-http://127.0.0.1:47658/hooks/demo-app/api/oauth/callback?code=abc
-```
+Recognised endpoint keys are `menu` (default `/api/menu`) and `action` (default
+`/api/menu/action`). Unknown keys are accepted and ignored, so a future version
+can add one without breaking an older host.
 
-forwards to:
+### Constraints the host enforces
 
-```text
-http://127.0.0.1:{current_app_port}/api/oauth/callback?code=abc
-```
+A descriptor is **untrusted input**: a file written by another process. It is
+never `eval`'d and never trusted to be well-typed or truthful. The host applies:
 
-### Security boundary
+- **A 16 KiB size cap**, enforced on the read rather than on a `stat` — a file can
+  grow between the two, and the point of the cap is to bound what enters memory.
+- **`name` must equal the filename stem.** Refused rather than reconciled: the
+  filename is what discovery keys off, so allowing them to differ would let one
+  raven publish a descriptor impersonating another.
+- **Endpoint values must be `/`-rooted relative paths** with no `..` segment, no
+  `//` or `/\` prefix, and no query or fragment. A value carrying a scheme or
+  authority would redirect the host off the raven it is talking to — the
+  descriptor equivalent of an open redirect. The host pins the origin to
+  `127.0.0.1` and the port to the declared one regardless.
+- **`token_path` must be absolute.** The path is checked for shape only; whether a
+  token can be read is decided per request, because you may rotate at any moment.
+- **No control characters, ANSI escapes, or bidirectional overrides** in any
+  string field. These are *refused*, not cleaned: a control character means the
+  file is not what it claims to be, and quietly repairing it would hide that. (In
+  a *menu* payload they are stripped instead — see [§4](#4-the-menu).)
+- **`bool` is not an `int`.** `true` in a numeric field is refused, not read as
+  `1`.
 
-A fixed loopback port is reachable by any web page the user happens to have open, so
-the proxy is built as a narrow, credential-free conduit rather than a general relay.
-It is designed for exactly one flow: a browser returning from an external provider by
-top-level navigation.
+Any violation makes you an **unavailable raven with a reason** ([§8](#8-liveness-and-unavailability)).
+Never a crash, never a silent omission.
 
-What the proxy guarantees:
+### Writing it
 
-- **Targets are registry-bound.** Only apps present in the Appistry registry can be
-  reached; the upstream host is always `127.0.0.1` and callers cannot supply a URL.
-  Invalid registered ports, stopped apps, and unreachable servers return errors.
-- **Only `GET` and `POST`** are accepted. `PUT`, `PATCH`, and `DELETE` are not routed.
-- **`Host` must be loopback.** A request whose `Host` is any other name — the signature
-  of a DNS-rebinding or drive-by request — is rejected with `400`.
-- **Any `Origin` is rejected** with `403`. The proxy serves no same-origin UI, and the
-  browser-return flow it exists for is a top-level navigation, which sends no `Origin`.
-  So an `Origin` means a page's script issued the request.
-- **Client headers are not forwarded.** The upstream request is built from a strict
-  allowlist (`Accept`, `Accept-Language`, `Content-Type`, `User-Agent`). `Authorization`,
-  `Cookie`, `Origin`, `Referer`, and all `X-*` headers are dropped, so the proxy cannot
-  replay a victim's ambient credentials into a local app.
-- **Response headers are allowlisted** (`Content-Type`, `Location`, `Content-Language`,
-  `Cache-Control`) and any value containing CR, LF, or a leading SP/TAB is dropped, so
-  an upstream app that reflects input into a header cannot inject headers into a response
-  the browser attributes to the proxy's origin. `Set-Cookie` is **never** relayed:
-  cookies ignore port, so relaying one would let it apply to every loopback app.
-- **Request bodies are capped at 1 MB**, read in bounded chunks. The declared
-  `Content-Length` is a hint, never a read size.
+**Write atomically.** The host may read at any moment and must never see a partial
+file. Stage in a temp file *in the same directory* (so the replace cannot cross a
+filesystem boundary), `fsync`, then `os.replace`.
 
-What it does **not** provide:
+**Publish after you bind.** A descriptor naming a port that is not yet listening
+makes the host report a healthy raven as unreachable during your startup.
 
-- **No authentication or authorization.** Any local process, and any web page that can
-  issue a same-origin-simple request, can reach the proxy. It is not an access-control
-  boundary.
-- **No identity assertion to the app.** The proxy does not tell the upstream app who the
-  caller was, and it does not preserve the caller's `Host`/`Origin`. An app that makes
-  security decisions from those headers must not treat a proxied request as equivalent
-  to a direct one; a request arriving through the proxy has passed the checks above and
-  nothing more.
-
-This is for browser-return flows on the user's own machine. It is not a public webhook
-ingress, because external services cannot reach a user's loopback address.
+**Remove it on exit,** best-effort. A stopped raven should have no descriptor
+rather than a stale one. A hard kill that skips this is still handled — the host
+checks your PID before trusting the file — so do not add complexity to guarantee
+it.
 
 ---
 
-## launchd Auto-Start
+## 3. Version compatibility
 
-`appistry install` writes this plist:
+**Declare a range. Never compare for equality.**
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>             <string>com.appistry.menubar</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/Users/USERNAME/.local/share/appistry/.venv/bin/python</string>
-    <string>/Users/USERNAME/.local/share/appistry/menubar.py</string>
-  </array>
-  <key>RunAtLoad</key>         <true/>
-  <key>KeepAlive</key>         <false/>
-  <key>StandardOutPath</key>   <string>/Users/USERNAME/.appistry/menubar.log</string>
-  <key>StandardErrorPath</key> <string>/Users/USERNAME/.appistry/menubar.log</string>
-</dict>
-</plist>
+You declare the inclusive window `min_api..max_api`. Appistry advertises
+`MIN_API_VERSION..API_VERSION` (currently `1..1`) and renders you if the two
+windows **overlap**:
+
+```
+min_api <= APPISTRY_API_VERSION  AND  max_api >= APPISTRY_MIN_API_VERSION
 ```
 
-`USERNAME` is substituted with `os.environ["USER"]` at install time.
+This is not stylistic. Exact matching is the bug behind **huginn issue #38**: one
+routine version bump silently disabled every plugin, with nothing on screen to
+say why. Two properties follow from getting it right:
 
-## Windows Startup and Native Launchers
+- **A bump on one side does not break the other.** A raven declaring `1..2`
+  keeps working against a host that speaks `1..1`, and vice versa.
+- **A genuine incompatibility is loud.** The host reports it as an unavailable
+  raven whose reason *names both ranges*:
 
-`appistry install` creates two Appistry shortcuts through the Windows Shell COM
-API, without invoking PowerShell or interpolating shell commands:
+  > `Descriptor needs raven API [3, 4]; this menu bar speaks [1, 1].`
 
-- `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Appistry.lnk`
-  starts `windows_tray.py` through the venv's `pythonw.exe` after sign-in.
-- `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Appistry\Appistry.lnk`
-  lets the user start the tray manually from the Start Menu.
+  Never a raven that quietly stops appearing.
 
-Every registered app also receives a contained, filename-sanitized `.lnk` in the
-same `Programs\Appistry` folder. Its target is the venv's `pythonw.exe`; its
-arguments call `appistry.py launch <validated-id>`. App icons are converted to
-bounded ICO files under `~/.appistry/shortcut-icons/`. Relative icon paths must
-remain inside the registered app's `cwd`.
+A declared value is capped at `API_VERSION + 100`, so a hostile descriptor cannot
+claim `max_api = 2**63` and stay "compatible" through every future breaking
+change.
 
-The Windows tray uses a named mutex for single-instance behavior, refreshes the
-current user's Environment registry values every five seconds, and owns the same
-loopback help/readiness and stable-hook servers as the macOS menu bar app.
+**Additive changes need no bump at all.** Unknown fields are dropped rather than
+rejected throughout, so adding a menu field or an endpoint key is not a protocol
+change. Reserve a bump for something that genuinely breaks an older reader.
 
 ---
 
-## Integration Guide for Apps
+## 4. The menu
 
-### Overview
+The host `GET`s your `menu` endpoint and expects JSON:
 
-The integration has three steps:
-
-1. **Detect** — is `appistry` available?
-2. **Offer to install** — if not, prompt the user (once) and clone + install
-3. **Register** — tell Appistry about this app
-
-All three steps should be gracefully skippable. If the user declines installation,
-or if Appistry is unavailable for any reason, the app continues to work normally
-(just without desktop tray integration).
-
-### Locating the Binary
-
-Appistry is considered available if either:
-
-- `appistry` is on `PATH` (i.e., `shutil.which("appistry")` is not `None`), or
-- the platform-specific explicit binary exists: `<APPISTRY_PATH>/appistry` on
-  macOS or `<APPISTRY_PATH>\.venv\Scripts\appistry.exe` on Windows.
-  `APPISTRY_PATH` defaults to `~/.local/share/appistry` and can be overridden via
-  the `APPISTRY_HOME` environment variable.
-
-Always check both. The second path covers the window between cloning and running
-`appistry install`.
-
-### Reference Implementation
-
-Copy [`appistry_integration.py`](appistry_integration.py) into your project and
-adapt only its constants block. The checked-in module is the authoritative,
-security-hardened implementation; it refuses to replace unrelated existing
-directories and treats installation/registration failures as soft skips.
-
-```python
-"""
-appistry_integration.py
-
-Drop this file into your project and call `setup_appistry()` from your
-first-run or setup flow. Adjust the APP_* constants for your app.
-"""
-
-import os
-import sys
-from pathlib import Path
-
-# ── Configure these for your app ──────────────────────────────────────────────
-
-APP_NAME    = "My App"
-APP_COMMAND = (
-    ".venv\\Scripts\\python.exe ui/server.py"
-    if sys.platform == "win32"
-    else ".venv/bin/python ui/server.py"
-)
-APP_PORT    = 8000
-APP_ICON    = "ui/static/icon.png"   # browser-renderable path relative to APP_CWD
-APP_CWD     = Path(__file__).resolve().parent  # project root
-
-APPISTRY_REPO    = "https://github.com/tohuw/appistry"
-APPISTRY_PATH    = Path(os.environ["APPISTRY_HOME"]) if os.environ.get("APPISTRY_HOME") \
-                   else Path.home() / ".local" / "share" / "appistry"
-APPISTRY_BINARY = (
-    APPISTRY_PATH / ".venv" / "Scripts" / "appistry.exe"
-    if sys.platform == "win32"
-    else APPISTRY_PATH / "appistry"
-)
+```json
+{
+  "api_version": 1,
+  "title": "Huginn",
+  "badge": 2,
+  "sections": [
+    {
+      "id": "attention",
+      "title": "Needs attention",
+      "items": [
+        {
+          "id": "focus:s-1",
+          "label": "Approve: deploy to staging",
+          "detail": "claude",
+          "style": "attention"
+        },
+        {"separator": true},
+        {"id": "open-console", "label": "Open Console", "url": "/"}
+      ]
+    }
+  ]
+}
 ```
 
-The module's `_install_appistry()` runs `appistry.py install` with the current
-Python interpreter on Windows because the venv console entry point does not exist
-until that command completes. Subsequent calls use `appistry.exe` directly.
+### Top level
 
-### When to Call `setup_appistry()`
+| Field | Type | Meaning |
+|---|---|---|
+| `title` | string | Replaces the descriptor's `display` for this render, so you can retitle your own section as your state changes. |
+| `badge` | int | Your count of things wanting attention, `0..9999`. Shown beside your name; summed across ravens. Zero is not shown. |
+| `sections` | array | Up to 12. Anything else is dropped. |
 
-Call it from your app's first-run or explicit setup command — not silently on
-every launch. The prompt should only appear when the user is already in a
-setup-oriented context.
+### A section
 
-```python
-# Example: in a `notekeeper setup` command
-def cmd_setup(projects, args):
-    from appistry_integration import setup_appistry
-    print("[Appistry]")
-    setup_appistry()
-    print()
-    # ... rest of setup
-```
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Opaque to the host. |
+| `title` | string | A heading row. Omit for an untitled group. |
+| `items` | array | **Required.** Up to 50 per section, 200 in total. A section with no renderable items is dropped entirely. |
 
-### Silent Re-Registration on Launch
+### An item
 
-After first-time setup, call `register()` directly (without `offer_install()`) on
-each launch so the registry stays current if the project moves or config changes.
-This is silent and fast — Appistry processes the call in milliseconds.
+| Field | Type | Meaning |
+|---|---|---|
+| `label` | string | **Required.** ≤120 chars. An item with no legible label is dropped — there is nothing to show. |
+| `id` | string | Action id, ≤128 chars. POSTed back to your `action` endpoint. |
+| `url` | string | Raven-local path, ≤512 chars. Opened as `http://127.0.0.1:{port}{url}`. |
+| `detail` | string | Secondary text, ≤80 chars. Rendered after the label. |
+| `enabled` | bool | Defaults `true`. An item with neither `id` nor `url` is forced to `false`. |
+| `style` | string | `normal`, `attention`, or `muted`. Anything else becomes `normal`. |
+| `separator` | bool | A divider. Every other field is ignored. |
 
-```python
-# At the bottom of your server startup, before blocking on uvicorn:
-from appistry_integration import register
-register()
-```
+### How the host treats it
 
-### Graceful Degradation
+- **`style` is an intent, not styling.** The host maps it to its own presentation
+  (currently a `●` or `·` marker). A raven cannot supply a marker of its own,
+  because that would be styling by another name — and the host deciding
+  presentation is what keeps the two platforms' menus identical.
+- **Strings are sanitised, not refused.** Unlike descriptor fields, a menu label
+  has ANSI escapes, control characters, and bidi overrides *stripped*, whitespace
+  collapsed, and length capped. A menu is live data on a hot path; a single bad
+  character should degrade one row, not disable a running raven. The reason both
+  policies exist: a bad descriptor is a broken raven, a bad label is a bad label.
+- **Bounds are enforced while parsing, not after.** A hostile payload cannot make
+  the host build a huge structure and only then discard it. Ten thousand items
+  would hang the menu build inside the UI run loop, which reads to the user as a
+  frozen desktop.
+- **Leading, trailing, and doubled separators are dropped.**
+- **Unknown fields are ignored.**
+- **An unusable payload leaves you "up but silent."** If you answer but nothing
+  survives parsing, the host draws your name with *"Nothing to report."* — which
+  is visibly different from a raven it could not reach.
 
-Your app must work fully without Appistry. Never gate core functionality on
-Appistry being present. The integration is additive — a nicer launcher — not load-
-bearing. All `appistry_integration` functions return a bool; check it only if you
-want to log; never raise on failure.
+An empty `sections` array is a legitimate answer and produces the same
+"Nothing to report." row.
 
 ---
 
-## App About Page
+## 5. Actions and links
 
-Each app may include an `about.md` at its project root. When present, Appistry
-surfaces an **About** item in the app's submenu that opens the page in the
-default browser as rendered HTML.
+An item carries **either** an `id` **or** a `url`. One with neither renders
+disabled, because a row that looks clickable and does nothing is worse than one
+that admits it.
 
-`about.md` is optional. Apps without one simply have no About item.
+### Actions
 
-### Format
+The host POSTs the id back, unchanged, to your `action` endpoint:
 
-```markdown
-# App Name
+```http
+POST /api/menu/action
+Content-Type: application/json
+X-Huginn-Token: <your token>
 
-_One sentence. What this app is._
-
-## What it does
-
-Two to four sentences describing the app's purpose and key behaviour from the
-user's point of view. No marketing language. No feature lists.
-
-## Data & Privacy
-
-What data this app collects, stores, or transmits — and where it goes. Be
-specific. If the app stores nothing and makes no network requests, say so
-explicitly: **This app stores no data and makes no network requests.**
+{"id": "focus:s-1"}
 ```
 
-### Rules
+The id is **your** vocabulary, round-tripped through a host that does not parse
+it. Any JSON object response is accepted; the host does not act on the body.
 
-- **Lead with the sentence.** The first paragraph under the `h1` is the
-  one-line summary. Write it as a plain declarative sentence, not a tagline.
-- **What it does is behaviour, not features.** Describe what happens when
-  the user uses the app — not a bulleted capability list.
-- **Data & Privacy is mandatory.** Omitting it reads as evasion. If there is
-  nothing to disclose, say so in one sentence.
-- **No third-level headings or deeper.** The page is a quick read, not a
-  manual. If you need more structure, you need fewer words.
-- **No screenshots, no badges, no links** (except to a privacy policy if one
-  exists, placed at the end of Data & Privacy).
+It still arrives over HTTP from another process, so **match it against what you
+actually issued** rather than parsing it for meaning. Treat it as a request, not
+an instruction.
 
-### Example
+The host bounds the call (5 s) and refuses to send an id that is not printable
+text. A failure is logged and shown at the next refresh; it never raises into the
+menu.
 
-```markdown
-# Notekeeper
+### Links
 
-_A local writing assistant that turns rough notes into structured prose._
-
-## What it does
-
-Notekeeper watches a folder of Markdown files and offers inline suggestions as you
-write. Accepting a suggestion rewrites the paragraph in place. All processing
-runs locally; nothing leaves your machine.
-
-## Data & Privacy
-
-Notekeeper reads files from the folder you configure and writes back to those same
-files when you accept a suggestion. It stores a small preferences file at
-`~/.notekeeper/config.toml`. No data is transmitted anywhere.
-```
+A `url` is opened in the browser as `http://127.0.0.1:{port}{url}`, built from
+**your descriptor's own port**. A menu item cannot navigate the user anywhere
+except the raven that offered it. Query strings are allowed (a link legitimately
+carries parameters); fragments are not.
 
 ---
 
-## Desktop Tray Behaviour
+## 6. Token isolation
 
-The desktop tray app reads the registry at startup and polls process state every
-5 seconds. Menu structure on macOS:
+> **Each raven owns its own credential. The host never mints one, never shares
+> one, and never caches one.**
 
-```
-[icon]
-  ● Notekeeper
-      Open ↗
-      Stop          ← Option: Restart
-      ──────────
-      About         ← Option: GitHub ↗
-  ● Widget
-      Open ↗
-      Stop
-  ──────────────────
-  Browse Apps ↗
-  ──────────────────
-  Help
-  ──────────────────
-  Quit All
-  Quit Appistry
-```
+Concretely:
 
-- Only **running** apps appear in the menu.
-- **Stop** becomes **Restart** when the Option key is held.
-- **About** appears only when the app's `cwd` contains an `about.md`. Holding Option
-  replaces it with **GitHub ↗**, which opens the app's GitHub repository.
-- **Browse Apps ↗** appears only when a catalog app is registered, and opens it. If
-  that app is not running, it is started first; the browser opens only after it
-  re-registers with its current port. The catalog app is identified by a registry id
-  that is currently hard-coded in `menubar.py` / `windows_tray.py`.
-- On Windows, Stop and Restart are separate submenu actions, and search opens a
-  keyboard-accessible native search window because Windows tray menus do not host
-  an inline search control.
-- **Quit All** stops all running apps and exits the tray app. It relaunches on the
-  next login, not immediately.
-- **Quit Appistry** closes the tray icon only; registered apps keep running.
+- The host reads a token from the `token_path` in **your** descriptor and sends it
+  only to **your** port, under the header **you** named.
+- It reads **fresh on every request**. You rotate whenever you like — a new token
+  per start is the expected pattern — with no coordination. A cached token would
+  make the host authenticate with a dead credential and report you as broken.
+- Request headers are built per call from a fixed allowlist. There is no path by
+  which one raven's credential can appear in another raven's request.
+- A token is capped at 4 KiB, and one containing CR/LF or control characters is
+  refused rather than sent — it would inject headers into the host's own request.
+- **No `token_path` means unauthenticated requests.** Whether that is acceptable
+  is your decision, not the host's. It will not invent a credential to cover for
+  you.
+
+If a read fails (mid-rotation, say), the host sends the request unauthenticated
+rather than failing the fetch. Your `401` then becomes a visible reason the user
+can act on:
+
+> `Rejected the credential from its own token file.`
+
+Write your token file **owner-only, created with restrictive permissions from the
+outset** (`os.open(..., 0o600)`), not chmodded after the fact — creating it first
+leaves a window in which it is world-readable.
 
 ---
 
-## Notes for Implementors
+## 7. Host election
 
-- **Port conflicts are your problem.** Appistry does not assign ports — you declare
-  yours. Ensure your app's port is unique across all registered apps.
-- **The command runs from `cwd`.** Use relative paths in `command` (for example,
-  `.venv/bin/python` on macOS or `.venv\\Scripts\\python.exe` on Windows) so the
-  registration is portable if the project moves.
-- **Icons should be 32×32 or 64×64 PNG.** Larger images are accepted but will be
-  scaled down by the native tray or launcher.
-- **`appistry register` is idempotent.** Call it freely; it updates rather than
-  duplicates.
+**Exactly one process draws the menu.** It is elected by an exclusive lock on a
+single file under Appistry's own state directory (`~/.appistry/menubar.lock`,
+mode 0600): whoever takes it hosts. `flock` on POSIX, an exclusive open on
+Windows — both released by the OS if the holder dies, so **there is no stale-lock
+case to reason about**, unlike a PID file.
+
+A second tray process finds the lock held and exits quietly. A process that
+cannot *create* the lock at all — a read-only state directory — reports that
+distinctly, because the two need different handling: contention is the normal
+outcome of a duplicate launch, while an unwritable path means this machine cannot
+host at all and the user has to be told.
+
+**Which raven leads the menu is a separate question, answered by data.** You
+declare `host_priority`; the host sorts by it, descending, then by name. Huginn
+declares a higher priority than Muninn and therefore leads when both are present;
+when Huginn is absent, Muninn's section simply sorts first and the same menu runs
+standalone.
+
+Neither raven knows the other exists, and the host knows neither name. Hardcoding
+one would be the same mistake as a hardcoded catalog id — which is exactly the
+mistake this repository's previous design made, twice, once per platform.
+
+Ravens do **not** participate in host election. You are not the host; you are
+never asked to be; you never need to know who is.
+
+---
+
+## 8. Liveness and unavailability
+
+### Liveness
+
+The host checks that the process you named is alive, resisting **PID reuse**:
+
+- `os.kill(pid, 0)` (or `psutil` on Windows) asks whether the process exists.
+- When you supplied `started`, it is cross-checked against the OS's own record of
+  when that process began, with two seconds of slack for clock differences. That
+  check is the only reason `started` is in the schema.
+- A non-positive PID is refused before it reaches any syscall.
+- `PermissionError` counts as alive: the process exists, it just belongs to
+  another user.
+- If the start time **cannot be determined**, the check does not contradict — a
+  missing cross-check must never turn a live raven into a dead one.
+
+**Supply `started`.** Without it, a recycled PID can pass as a live raven and the
+user sees a raven that is not running.
+
+### Unavailability is a first-class result
+
+> An unreachable, stopped, stale, or malformed raven renders as a **disabled
+> section with a visible reason**.
+
+Never a crash. Never a silent omission — a raven that vanished from the menu is
+indistinguishable from one that was never installed, and leaves the user nothing
+to act on. Never "trusted anyway."
+
+```
+Muninn
+  Not running (its recorded process is gone).
+```
+
+The reasons the host produces:
+
+| Reason | Cause |
+|---|---|
+| `Not running (its recorded process is gone).` | PID dead, or `started` did not match |
+| `Is not answering on its recorded port.` | Connection refused or failed |
+| `Did not answer in time.` | Exceeded the fetch timeout |
+| `Rejected the credential from its own token file.` | Answered `401`/`403` |
+| `Answered HTTP {code}.` | Any other error status |
+| `Answered with something that is not JSON.` | Unparseable body |
+| `Sent a response that is too large.` | Over 256 KiB |
+| `Descriptor …` | Any validation failure, quoting the specific problem |
+
+Failure is **not contagious**: one broken raven never prevents another's section
+from rendering, and the host survives a raven that hangs, floods, or lies.
+
+`appistry ravens` prints the same reasons in a terminal.
+
+---
+
+## 9. What the host requires of your HTTP surface
+
+The host is **not** a security boundary on your behalf. It never forwards an
+inbound request to you — it is purely an outbound client — so anything reaching
+your port came from something else. Defend it yourself.
+
+**Required:**
+
+- **Bind loopback only.** `127.0.0.1`, never `0.0.0.0`.
+- **Validate `Host` is loopback.** A page served from any other hostname carries
+  that hostname in `Host` even when it resolves to `127.0.0.1`. This is what stops
+  DNS rebinding, and it is the check a relay must never be able to launder past —
+  see the note below.
+- **Reject any request carrying an `Origin`.** Your menu API serves no page a
+  script should be calling; an `Origin` means one did.
+- **Guard `Content-Length`.** Reject `length < 0` or `> cap` before reading a
+  byte. A negative length passed to `read()` means "until EOF" — no bound at all.
+- **Compare tokens in constant time** (`hmac.compare_digest`). `==` on a secret
+  leaks its prefix through timing.
+- **Send `X-Content-Type-Options: nosniff`** on every response, and a
+  `Content-Security-Policy` on any HTML.
+
+**The host's side of the bargain:** every call is bounded — a 2 s menu timeout, a
+5 s action timeout, a 256 KiB response cap enforced on the read rather than on
+your declared `Content-Length`, and redirects refused outright (following one
+would send the host, and the token it just attached, to an origin your descriptor
+never declared). A hung raven degrades to a disabled section, never to a frozen
+menu.
+
+> **Why the host relays nothing.** An earlier design in this repository ran an
+> unauthenticated proxy on a fixed loopback port that rewrote `Host` to a clean
+> loopback value. Any web page could reach it, and what arrived upstream looked
+> locally originated — laundering an attack straight past the app's own
+> `require_local_origin` check. The fix was structural, not a filter: there is no
+> upstream. Appistry's only listener is the Help page, which forwards nothing,
+> refuses a foreign `Host` and **any** `Origin`, takes no request body, and routes
+> only `GET`.
+>
+> Do not add a relay to this protocol. If a raven needs a fixed external URL, it
+> owns that endpoint itself, with its own authentication.
+
+---
+
+## 10. A raven's checklist
+
+**Startup**
+
+1. Bind a port on `127.0.0.1`.
+2. Mint a token and write it `0600` (or decide, explicitly, to accept
+   unauthenticated requests).
+3. Write your descriptor **atomically**, and only **after** the bind. Include
+   `started`. Declare `min_api`/`max_api` as a **range**.
+
+**While running**
+
+4. Serve `menu` returning the JSON in [§4](#4-the-menu). Keep it fast: it is on
+   the host's menu-build path.
+5. Serve `action` if you publish any ids, and match each against what you issued.
+6. On every request: check `Host`, reject any `Origin`, guard `Content-Length`,
+   compare the token in constant time.
+7. Rewrite the descriptor if your port or token path changes.
+
+**Shutdown**
+
+8. Remove your descriptor and token file, best-effort.
+
+**Never**
+
+- Compare `api_version` for equality.
+- Assume the host will authenticate for you, or supply a credential.
+- Assume the host understands what any of your ids mean.
+- Assume you are the host, or that another raven is running.
+- Return an unbounded response, or block a menu fetch indefinitely.
+
+---
+
+## Reference implementations
+
+| File | Shows |
+|---|---|
+| [`examples/huginn_raven.py`](examples/huginn_raven.py) | Leading raven: higher priority, badge, token, per-item actions |
+| [`examples/muninn_raven.py`](examples/muninn_raven.py) | Companion raven: lower priority, link-only rows, no token |
+
+Both are stdlib-only and runnable:
+
+```bash
+python3 examples/huginn_raven.py
+```
+
+Start one or both and the tray will show them; `appistry ravens` will explain
+anything it will not show.

@@ -179,8 +179,12 @@ def render_help_page(nonce: str = "") -> str:
     # help.md holds non-ASCII characters, so the encoding must be explicit:
     # relying on the platform default raises UnicodeDecodeError under a legacy
     # code page and takes the Help page down with it.
+    # "tables" is enabled because help.md uses one to explain the reasons a raven
+    # can be unavailable — a list of what-you-see/what-it-means pairs reads far
+    # worse as prose. The rendered tags are in the allowlist below.
     raw_body = _md.markdown(
-        (HERE / "help.md").read_text(encoding="utf-8"), extensions=["fenced_code"]
+        (HERE / "help.md").read_text(encoding="utf-8"),
+        extensions=["fenced_code", "tables"],
     )
     body = nh3.clean(
         raw_body,
@@ -212,11 +216,17 @@ def render_help_page(nonce: str = "") -> str:
                   border-radius: 0 6px 6px 0; margin: 1em 0; padding: 10px 14px; }}
     blockquote p {{ margin: 0; }}
     hr {{ border: none; border-top: 1px solid #d1d1d6; margin: 1.5em 0; }}
+    table {{ border-collapse: collapse; width: 100%; margin: 1em 0;
+             font-size: 0.92rem; }}
+    th, td {{ text-align: left; vertical-align: top; padding: 7px 10px;
+              border-bottom: 1px solid #d1d1d6; }}
+    th {{ font-weight: 600; }}
     @media (prefers-color-scheme: dark) {{
       body {{ background: #1c1c1e; color: #f2f2f7; }}
       pre  {{ background: #2c2c2e; }}
       code {{ background: #3a3a3c; }}
       blockquote {{ background: #2c2c1e; }}
+      th, td {{ border-bottom-color: #3a3a3c; }}
     }}
   </style>
 </head>
