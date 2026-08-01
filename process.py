@@ -116,7 +116,15 @@ def _split_command(command: str) -> list[str]:
 
 
 def _validate_command(command: str, cwd: str) -> list[str]:
-    """Parse and validate a registry command before execution.
+    """Parse a registry command into argv, rejecting obviously wrong shapes.
+
+    This is NOT a security boundary and must not be read as one. A registered
+    `command` is trusted as the user: whoever can write the registry already
+    runs code as that user, so there is nothing to escalate to. The checks here
+    exist to catch mistakes and to make one specific class of accident loud —
+    a registered entry that hands arbitrary text to a shell (`bash -c "..."`),
+    which would silently defeat `shell=False` and the argv-list launch model.
+    The blocklist is intentionally not exhaustive; do not treat it as complete.
 
     Raises ValueError if the command is empty, the executable looks unsafe, or
     any argument is a shell code-injection flag (-c / --command).
@@ -287,10 +295,7 @@ def _restrict_to_owner(path: Path) -> None:
                 str(path), win32security.DACL_SECURITY_INFORMATION, sd
             )
         except Exception:
-            # Log only that restriction failed, not which path — path is
-            # derived from _secret_path() and CodeQL's sensitive-data query
-            # flags anything logged from a "secret"-named code path.
-            log.debug("Could not restrict ACL for launch-secret path", exc_info=True)
+            log.debug("Could not restrict ACL for %s", path, exc_info=True)
     else:
         mode = 0o700 if path.is_dir() else 0o600
         try:

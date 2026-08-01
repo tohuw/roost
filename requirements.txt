@@ -1,8 +1,10 @@
 rumps;sys_platform=="darwin"
 pywebview==6.2.1
-markdown
-nh3>=0.2.14
-urllib3>=2.7.0
+# markdown and nh3 render and then sanitize registry-supplied about.md, so the
+# sanitizer version has to be reproducible — a floating range would let the
+# security boundary shift between installs.
+markdown==3.10.3
+nh3==0.3.6
 tomli>=2.0.0;python_version<"3.11"
 pyobjc-core<12.0;sys_platform=="darwin" and python_version<"3.10"
 pystray==0.19.5;sys_platform=="win32"

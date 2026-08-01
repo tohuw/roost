@@ -10,7 +10,7 @@ import json
 import logging
 import os
 # Process launches in this module use fixed local executables and argv lists.
-import subprocess  # nosec B404
+import subprocess
 import sys
 import time
 import urllib.error
@@ -394,7 +394,7 @@ def control_server_running() -> bool:
             return False
         url = f"http://127.0.0.1:{port}/api/status"
         # The URL is fixed to loopback and the port is range-checked above.
-        with urllib.request.urlopen(  # nosec B310
+        with urllib.request.urlopen(
             url,
             timeout=0.5,
         ) as response:
@@ -412,7 +412,7 @@ def start_tray(appistry_dir: Path, *, wait: bool = True) -> bool:
     target = _venv_executable(appistry_dir, windowed=True)
     try:
         # Both paths are derived from this trusted installation directory.
-        proc = subprocess.Popen(  # nosec B603
+        proc = subprocess.Popen(
             [str(target), str(appistry_dir / "windows_tray.py")],
             cwd=str(appistry_dir),
             stdin=subprocess.DEVNULL,
