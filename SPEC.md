@@ -46,7 +46,7 @@ Fields:
 | `id`            | yes      | Lowercase slug, auto-derived from `name` if omitted          |
 | `name`          | yes      | Display name shown in the desktop tray menu                  |
 | `cwd`           | yes      | Absolute path to the project root; commands run from here    |
-| `command`       | yes      | Shell command to start the server, relative to `cwd`         |
+| `command`       | yes      | Argv-style command to start the server, relative to `cwd`    |
 | `port`          | yes      | Port the server listens on                                   |
 | `github_url`    | yes      | HTTPS GitHub URL, resolved from the repo's `origin` remote  |
 | `icon`          | no       | Path to a browser-renderable icon, relative to `cwd`         |
@@ -54,6 +54,26 @@ Fields:
 
 The icon should be PNG, JPEG, GIF, WebP, or ICO for the browser launch page. PNG
 is preferred because it converts cleanly into macOS app-bundle and Windows shortcut icons.
+
+`name` must be non-empty, at most 200 characters, and free of control characters —
+it is written into `registry.toml` and used as a filesystem-visible bundle name.
+`cwd` must be an absolute path and must not be the filesystem root: it anchors the
+containment check for relative executables and it is the target of the git-aware
+cleanup that runs when an app's launcher is deleted.
+
+### How `command` is validated
+
+`command` is split into an argv list and launched with `shell=False` — it is never
+handed to a shell. Appistry additionally rejects a bare interpreter (`bash`, `python`)
+with no arguments, Windows `.bat`/`.cmd` launchers, relative executables that escape
+`cwd`, and arguments that pass code to an interpreter (`-c`, `--command`, `/c`, `/k`).
+
+**These checks are not a security boundary.** A registered `command` is trusted as the
+user: anything that can write `registry.toml` already runs code as that user, so there
+is no privilege to escalate. The checks exist to catch mistakes and to make one class
+of accident loud — a registered entry that funnels arbitrary text through a shell,
+which would quietly defeat the argv-list launch model. The list is deliberately not
+exhaustive; do not rely on it to contain a hostile registry.
 
 ---
 
@@ -222,9 +242,8 @@ http://127.0.0.1:{hook_port}/hooks/{app_id}/{app-local-path}
 ```
 
 The proxy strips `/hooks/{app_id}` and forwards the request to the app's current
-registered loopback port, preserving the method, query string, body, and ordinary
-headers. Redirect responses are relayed back to the browser instead of followed
-server-side. For example:
+registered loopback port, preserving the method, query string, and body. Redirect
+responses are relayed back to the browser instead of followed server-side. For example:
 
 ```text
 http://127.0.0.1:47658/hooks/demo-app/api/oauth/callback?code=abc
@@ -236,12 +255,46 @@ forwards to:
 http://127.0.0.1:{current_app_port}/api/oauth/callback?code=abc
 ```
 
-Security boundary:
+### Security boundary
 
-- The proxy only targets apps present in the Appistry registry.
-- The upstream host is always `127.0.0.1`; callers cannot provide an arbitrary URL.
-- Invalid registered ports, stopped apps, and unreachable app servers return errors.
-- Request bodies are capped at 1 MB.
+A fixed loopback port is reachable by any web page the user happens to have open, so
+the proxy is built as a narrow, credential-free conduit rather than a general relay.
+It is designed for exactly one flow: a browser returning from an external provider by
+top-level navigation.
+
+What the proxy guarantees:
+
+- **Targets are registry-bound.** Only apps present in the Appistry registry can be
+  reached; the upstream host is always `127.0.0.1` and callers cannot supply a URL.
+  Invalid registered ports, stopped apps, and unreachable servers return errors.
+- **Only `GET` and `POST`** are accepted. `PUT`, `PATCH`, and `DELETE` are not routed.
+- **`Host` must be loopback.** A request whose `Host` is any other name — the signature
+  of a DNS-rebinding or drive-by request — is rejected with `400`.
+- **Any `Origin` is rejected** with `403`. The proxy serves no same-origin UI, and the
+  browser-return flow it exists for is a top-level navigation, which sends no `Origin`.
+  So an `Origin` means a page's script issued the request.
+- **Client headers are not forwarded.** The upstream request is built from a strict
+  allowlist (`Accept`, `Accept-Language`, `Content-Type`, `User-Agent`). `Authorization`,
+  `Cookie`, `Origin`, `Referer`, and all `X-*` headers are dropped, so the proxy cannot
+  replay a victim's ambient credentials into a local app.
+- **Response headers are allowlisted** (`Content-Type`, `Location`, `Content-Language`,
+  `Cache-Control`) and any value containing CR, LF, or a leading SP/TAB is dropped, so
+  an upstream app that reflects input into a header cannot inject headers into a response
+  the browser attributes to the proxy's origin. `Set-Cookie` is **never** relayed:
+  cookies ignore port, so relaying one would let it apply to every loopback app.
+- **Request bodies are capped at 1 MB**, read in bounded chunks. The declared
+  `Content-Length` is a hint, never a read size.
+
+What it does **not** provide:
+
+- **No authentication or authorization.** Any local process, and any web page that can
+  issue a same-origin-simple request, can reach the proxy. It is not an access-control
+  boundary.
+- **No identity assertion to the app.** The proxy does not tell the upstream app who the
+  caller was, and it does not preserve the caller's `Host`/`Origin`. An app that makes
+  security decisions from those headers must not treat a proxied request as equivalent
+  to a direct one; a request arriving through the proxy has passed the checks above and
+  nothing more.
 
 This is for browser-return flows on the user's own machine. It is not a public webhook
 ingress, because external services cannot reach a user's loopback address.

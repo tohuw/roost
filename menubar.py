@@ -157,19 +157,37 @@ _LAUNCH_ICON_TYPES = {
     ".webp": "image/webp",
 }
 _HOOK_MAX_BODY = 1_048_576
+_HOOK_READ_CHUNK = 65_536
 _HOOK_PROXY_TIMEOUT = 30
 _SEARCH_LABEL = "Search running apps"
-_HOP_BY_HOP_HEADERS = {
-    "connection",
-    "content-length",
-    "host",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+# Both proxy directions are now allowlists, which subsume hop-by-hop filtering:
+# a header that is not named below is not forwarded, so there is no denylist to
+# keep in sync and no way for a new hop-by-hop header to slip through.
+#
+# The hook proxy must not act as a confused deputy. A browser page on any origin
+# can reach a fixed loopback port, and anything this proxy forwards arrives at
+# the app server looking locally originated — which would launder an attack past
+# the app's own Host/Origin defenses. So the proxy forwards *nothing* it was not
+# explicitly designed to forward: no ambient credentials (Authorization,
+# Cookie), no origin metadata (Origin, Referer), and no X-* headers.
+_HOOK_REQUEST_HEADER_ALLOWLIST = {
+    "accept",
+    "accept-language",
+    "content-type",
+    "user-agent",
+}
+
+# Likewise on the way back: an upstream app that reflects a URL parameter into a
+# response header must not be able to inject headers into a response the browser
+# attributes to the proxy's origin. Set-Cookie is never relayed — cookies ignore
+# port, so relaying one would let an app (or an attacker through it) set cookies
+# for every loopback app the user runs.
+_HOOK_RESPONSE_HEADER_ALLOWLIST = {
+    "content-type",
+    "location",
+    "content-language",
+    "cache-control",
 }
 
 
@@ -728,10 +746,66 @@ def _hook_proxy_target(app_id: str, target_path: str, query: str = "") -> tuple[
 
 
 def _hook_headers(headers) -> dict[str, str]:
-    return {
-        key: value for key, value in headers.items()
-        if key.lower() not in _HOP_BY_HOP_HEADERS
-    }
+    """Build the upstream request headers from a strict allowlist.
+
+    Client headers are never forwarded wholesale. Only the handful of headers a
+    browser-return flow actually needs survive; everything else — notably
+    Authorization, Cookie, Origin, Referer, and any X-* header — is dropped so
+    the proxy cannot be used to replay a victim's ambient credentials or to
+    smuggle attacker-controlled metadata into a local app server.
+    """
+    forwarded: dict[str, str] = {}
+    for key, value in headers.items():
+        if key.lower() not in _HOOK_REQUEST_HEADER_ALLOWLIST:
+            continue
+        if _header_value_is_unsafe(value):
+            continue
+        forwarded[key] = value
+    return forwarded
+
+
+def _header_value_is_unsafe(value: str) -> bool:
+    """Return True if a header value could split or fold into extra headers.
+
+    `send_header` performs no CRLF validation, and http.client preserves
+    obs-fold continuation lines (a value line beginning with SP/TAB) inside a
+    single header value, so either shape lets an upstream response inject
+    arbitrary headers into ours.
+    """
+    if value is None:
+        return True
+    if "\r" in value or "\n" in value or "\0" in value:
+        return True
+    return value[:1] in (" ", "\t")
+
+
+def _request_host_is_local(headers) -> bool:
+    """Return True if the Host header names a loopback address.
+
+    Mirrors the check local app servers make themselves: a page served from any
+    other hostname carries that hostname in Host even when it resolves to
+    127.0.0.1, so this is what stops DNS-rebinding and drive-by requests.
+    """
+    raw = headers.get("Host")
+    if not raw:
+        return False
+    host = raw.strip()
+    if host.startswith("["):  # bracketed IPv6 literal
+        host = host[1:].partition("]")[0]
+    else:
+        host = host.partition(":")[0]
+    return host.casefold() in _LOCAL_HOSTS
+
+
+def _request_has_origin(headers) -> bool:
+    """Return True if the request carries an Origin header.
+
+    The proxy serves no same-origin UI, and the flow it exists for — a browser
+    returning from an OAuth provider — is a top-level navigation, which sends no
+    Origin. So *any* Origin means the request came from a page's script rather
+    than from the user's own navigation, and is rejected outright.
+    """
+    return headers.get("Origin") is not None
 
 
 def _hook_path_parts(path: str) -> tuple[str, str] | None:
@@ -745,11 +819,26 @@ def _hook_path_parts(path: str) -> tuple[str, str] | None:
 
 
 def _relay_upstream_response(handler: http.server.BaseHTTPRequestHandler, response, data: bytes) -> None:
+    """Relay an upstream response through a response-header allowlist.
+
+    Only headers the browser-return flow needs are copied, and any value that
+    could split the response or fold into an extra header is dropped rather than
+    sanitised. Set-Cookie is deliberately absent from the allowlist.
+    """
     handler.send_response(getattr(response, "status", getattr(response, "code", 502)))
+    seen: set[str] = set()
     for key, value in response.headers.items():
-        if key.lower() not in _HOP_BY_HOP_HEADERS:
-            handler.send_header(key, value)
-    handler.send_header("Cache-Control", "no-store")
+        name = key.lower()
+        if name not in _HOOK_RESPONSE_HEADER_ALLOWLIST:
+            continue
+        if name in seen:  # a duplicate can only add ambiguity here
+            continue
+        if _header_value_is_unsafe(value):
+            continue
+        seen.add(name)
+        handler.send_header(key, value)
+    if "cache-control" not in seen:
+        handler.send_header("Cache-Control", "no-store")
     handler.send_header("Content-Length", str(len(data)))
     handler.end_headers()
     handler.wfile.write(data)
@@ -767,6 +856,31 @@ def _hook_urlopen(request: urllib.request.Request):
     return _HOOK_OPENER.open(request, timeout=_HOOK_PROXY_TIMEOUT)
 
 
+def _read_capped_body(rfile, declared_length: int) -> bytes | None:
+    """Read up to _HOOK_MAX_BODY bytes, or None if the body exceeds the cap.
+
+    The declared Content-Length is treated as a hint, never as a read size: a
+    negative value would make `read()` consume until EOF, and an inflated one
+    would make us wait for bytes that never arrive. Reading in bounded chunks
+    means the cap holds regardless of what the client claimed.
+    """
+    if declared_length <= 0:
+        return b""
+    remaining = min(declared_length, _HOOK_MAX_BODY + 1)
+    chunks: list[bytes] = []
+    total = 0
+    while remaining > 0:
+        chunk = rfile.read(min(_HOOK_READ_CHUNK, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        remaining -= len(chunk)
+        if total > _HOOK_MAX_BODY:
+            return None
+    return b"".join(chunks)
+
+
 def _hook_server_start() -> int:
     """Start the stable hook proxy. Returns 0 if the fixed port is unavailable."""
     global _hook_server, _hook_server_port
@@ -778,22 +892,22 @@ def _hook_server_start() -> int:
         class _Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *_): pass  # silence access log
 
+            # Only GET and POST are proxied. Browser-return flows need nothing
+            # else, and every additional method is another state-changing verb a
+            # malicious page could aim at a local app server.
             def do_GET(self):
                 self._proxy()
 
             def do_POST(self):
                 self._proxy()
 
-            def do_PUT(self):
-                self._proxy()
-
-            def do_PATCH(self):
-                self._proxy()
-
-            def do_DELETE(self):
-                self._proxy()
-
             def _proxy(self):
+                if not _request_host_is_local(self.headers):
+                    self._json(400, {"error": "Unexpected Host header."})
+                    return
+                if _request_has_origin(self.headers):
+                    self._json(403, {"error": "Cross-origin requests are not accepted."})
+                    return
                 parsed = urllib.parse.urlparse(self.path)
                 parts = _hook_path_parts(parsed.path)
                 if parts is None:
@@ -810,10 +924,16 @@ def _hook_server_start() -> int:
                 except ValueError:
                     self._json(400, {"error": "Invalid Content-Length."})
                     return
-                if length > _HOOK_MAX_BODY:
+                # A negative length is not merely invalid, it is dangerous:
+                # read(-1) means "read until EOF", i.e. no cap at all.
+                if length < 0 or length > _HOOK_MAX_BODY:
                     self._json(413, {"error": "Hook request body is too large."})
                     return
-                body = self.rfile.read(length) if length else None
+                body = _read_capped_body(self.rfile, length)
+                if body is None:
+                    self._json(413, {"error": "Hook request body is too large."})
+                    return
+                body = body or None
                 request = urllib.request.Request(
                     target_url,
                     data=body,
@@ -869,6 +989,10 @@ def _hook_server_shutdown() -> None:
         port = _hook_server_port
         if _hook_server is not None:
             _hook_server.shutdown()
+            # Without server_close() the listening socket stays bound, so an
+            # in-process restart hits the "port unavailable" path and silently
+            # disables every hook URL.
+            _hook_server.server_close()
             _hook_server = None
             _hook_server_port = 0
         try:
