@@ -21,6 +21,7 @@ import http.server
 import json
 import logging
 import os
+import secrets
 import socket
 import socketserver
 import subprocess
@@ -159,8 +160,24 @@ _LAUNCH_ICON_TYPES = {
 _HOOK_MAX_BODY = 1_048_576
 _HOOK_READ_CHUNK = 65_536
 _HOOK_PROXY_TIMEOUT = 30
+_MAX_ICON_BYTES = 10 * 1024 * 1024
 _SEARCH_LABEL = "Search running apps"
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+# The help and launch pages carry their own inline <style>/<script> and load
+# nothing else, so a per-response nonce lets the CSP forbid every external
+# source outright. default-src 'none' means an injected <script src>, <img>, or
+# form post has nowhere to go even if escaping were ever bypassed.
+_CSP_TEMPLATE = (
+    "default-src 'none'; "
+    "img-src 'self' data:; "
+    "style-src 'nonce-{nonce}'; "
+    "script-src 'nonce-{nonce}'; "
+    "connect-src 'self'; "
+    "form-action 'none'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'"
+)
 # Both proxy directions are now allowlists, which subsume hop-by-hop filtering:
 # a header that is not named below is not forwarded, so there is no denylist to
 # keep in sync and no way for a new hop-by-hop header to slip through.
@@ -496,7 +513,9 @@ _HELP_IDLE_SECS = 600  # shut server down after 10 min of inactivity
 _help_server: "socketserver.TCPServer | None" = None
 _help_server_port: int = 0
 _help_idle_timer: "threading.Timer | None" = None
-_help_server_lock = threading.Lock()
+# Reentrant: _reset_idle_timer mutates _help_idle_timer from request threads and
+# is also called from inside _help_server_start, which already holds this lock.
+_help_server_lock = threading.RLock()
 _hook_server: "socketserver.TCPServer | None" = None
 _hook_server_port: int = 0
 _hook_server_lock = threading.Lock()
@@ -525,11 +544,46 @@ def _launch_icon_path(app_id: str) -> "Path | None":
     return resolved if resolved.is_file() else None
 
 
-def _render_launch_page(app_id: str) -> "str | None":
+def _read_icon_bytes(icon_path: Path) -> "bytes | None":
+    """Read an app icon, refusing anything over the size cap.
+
+    The icon path comes from the registry, so its size is not ours to trust —
+    without a cap a single request could read an arbitrarily large file entirely
+    into memory. Matches the limit windows_support applies to icon sources.
+    """
+    try:
+        if icon_path.stat().st_size > _MAX_ICON_BYTES:
+            log.warning("Refusing oversized launch icon (>%d bytes)", _MAX_ICON_BYTES)
+            return None
+        with icon_path.open("rb") as fh:
+            data = fh.read(_MAX_ICON_BYTES + 1)
+    except OSError:
+        return None
+    if len(data) > _MAX_ICON_BYTES:
+        return None
+    return data
+
+
+def _html_nonce() -> str:
+    """Return a fresh CSP nonce for one inline-asset HTML response."""
+    return secrets.token_urlsafe(16)
+
+
+def _nonce_attr(nonce: str) -> str:
+    """Render a nonce attribute, or nothing when no nonce is in play."""
+    return f' nonce="{html.escape(nonce, quote=True)}"' if nonce else ""
+
+
+def _csp_for(nonce: str) -> str:
+    return _CSP_TEMPLATE.format(nonce=nonce)
+
+
+def _render_launch_page(app_id: str, nonce: str = "") -> "str | None":
     entry = registry.get(app_id)
     if entry is None:
         return None
 
+    nonce_attr = _nonce_attr(nonce)
     app_name = html.escape(entry.name)
     port = html.escape(str(entry.port))
     app_id_json = json.dumps(app_id)
@@ -547,7 +601,7 @@ def _render_launch_page(app_id: str) -> "str | None":
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Opening {app_name}</title>
-  <style>
+  <style{nonce_attr}>
     :root {{
       color-scheme: light dark;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -668,7 +722,7 @@ def _render_launch_page(app_id: str) -> "str | None":
       <button id="retry" class="hidden" type="button">Retry</button>
     </div>
   </main>
-  <script>
+  <script{nonce_attr}>
     const appId = {app_id_json};
     const timeoutMs = {_LAUNCH_TIMEOUT_SECONDS * 1000};
     const pollMs = {_LAUNCH_POLL_MS};
@@ -1015,40 +1069,52 @@ def _help_server_start() -> int:
             def log_message(self, *_): pass  # silence access log
 
             def do_GET(self):
+                # The help server is reachable from any web page just like the
+                # hook proxy is, so it gets the same loopback Host check.
+                if not _request_host_is_local(self.headers):
+                    self.send_error(400, "Unexpected Host header")
+                    return
                 _reset_idle_timer()
+                try:
+                    self._route()
+                except Exception:
+                    log.warning("Help server request failed", exc_info=True)
+                    try:
+                        self.send_error(500)
+                    except OSError:
+                        pass
+
+            def _route(self):
                 parsed = urllib.parse.urlparse(self.path)
                 path = parsed.path
                 if path in ("/", ""):
-                    page = _render_help_page()
-                    data = page.encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(data)))
-                    self.end_headers()
-                    self.wfile.write(data)
+                    nonce = _html_nonce()
+                    self._html(_render_help_page(nonce), nonce)
                 elif path.startswith("/launch/"):
                     app_id = urllib.parse.unquote(path[len("/launch/"):])
-                    page = _render_launch_page(app_id)
+                    nonce = _html_nonce()
+                    page = _render_launch_page(app_id, nonce)
                     if page is None:
                         self.send_error(404)
                         return
-                    data = page.encode("utf-8")
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html; charset=utf-8")
-                    self.send_header("Cache-Control", "no-store")
-                    self.send_header("Content-Length", str(len(data)))
-                    self.end_headers()
-                    self.wfile.write(data)
+                    self._html(page, nonce)
                 elif path.startswith("/launch-icon/"):
                     app_id = urllib.parse.unquote(path[len("/launch-icon/"):])
                     icon_path = _launch_icon_path(app_id)
                     if icon_path is None:
                         self.send_error(404)
                         return
-                    data = icon_path.read_bytes()
+                    data = _read_icon_bytes(icon_path)
+                    if data is None:
+                        self.send_error(404)
+                        return
                     self.send_response(200)
                     self.send_header("Content-Type", _LAUNCH_ICON_TYPES[icon_path.suffix.lower()])
+                    # The Content-Type comes from a registry-supplied filename
+                    # extension, so pin the browser to it and never let the
+                    # response be treated as a document.
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Content-Disposition", "inline")
                     self.send_header("Cache-Control", "no-store")
                     self.send_header("Content-Length", str(len(data)))
                     self.end_headers()
@@ -1060,6 +1126,17 @@ def _help_server_start() -> int:
                     self._json(200, {"service": "appistry", "ok": True})
                 else:
                     self.send_error(404)
+
+            def _html(self, page: str, nonce: str):
+                data = page.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Security-Policy", _csp_for(nonce))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
 
             def _json(self, status: int, payload: dict):
                 data = json.dumps(payload).encode("utf-8")
@@ -1094,12 +1171,19 @@ def _help_server_start() -> int:
 
 
 def _reset_idle_timer():
+    """(Re)arm the help server's idle shutdown timer.
+
+    Called from request threads, so the module global must be mutated under the
+    same lock that _help_server_start/_help_server_shutdown use — otherwise two
+    concurrent requests can leak a timer or cancel the live one.
+    """
     global _help_idle_timer
-    if _help_idle_timer is not None:
-        _help_idle_timer.cancel()
-    _help_idle_timer = threading.Timer(_HELP_IDLE_SECS, _help_server_shutdown)
-    _help_idle_timer.daemon = True
-    _help_idle_timer.start()
+    with _help_server_lock:
+        if _help_idle_timer is not None:
+            _help_idle_timer.cancel()
+        _help_idle_timer = threading.Timer(_HELP_IDLE_SECS, _help_server_shutdown)
+        _help_idle_timer.daemon = True
+        _help_idle_timer.start()
 
 
 def _help_server_shutdown():
@@ -1119,17 +1203,34 @@ def _help_server_shutdown():
         _help_idle_timer = None
 
 
-def _render_help_page() -> str:
+def _render_help_page(nonce: str = "") -> str:
     import markdown as _md
+    import nh3
     src  = HERE / "help.md"
-    body = _md.markdown(src.read_text(), extensions=["fenced_code"])
+    # help.md ships with the repo but contains non-ASCII characters, so the
+    # encoding must be explicit: relying on the platform default raises
+    # UnicodeDecodeError under a legacy code page and takes the Help page down.
+    raw_body = _md.markdown(src.read_text(encoding="utf-8"),
+                            extensions=["fenced_code"])
+    # Sanitised for consistency with _make_about. The source is repo-controlled
+    # today, but "the renderer sanitises" should not depend on where the
+    # markdown happened to come from.
+    body = nh3.clean(
+        raw_body,
+        tags={"h1", "h2", "h3", "p", "em", "strong", "code", "pre", "a",
+              "ul", "ol", "li", "blockquote", "br", "hr"},
+        attributes={"a": {"href", "title"}},
+        url_schemes={"https"},
+        link_rel="noopener noreferrer",
+    )
+    nonce_attr = _nonce_attr(nonce)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Appistry Help</title>
-  <style>
+  <style{nonce_attr}>
     body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
            max-width: 560px; margin: 60px auto; padding: 0 24px;
            color: #1d1d1f; line-height: 1.6; }}

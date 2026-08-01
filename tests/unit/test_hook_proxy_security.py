@@ -515,3 +515,26 @@ def test_hook_server_shutdown_closes_its_listening_socket(monkeypatch, tmp_path)
         assert menubar._hook_server_start() == hook_port, "hook URLs were disabled"
     finally:
         menubar._hook_server_shutdown()
+
+
+def test_reset_idle_timer_holds_the_help_server_lock():
+    """The idle timer global is mutated from request threads."""
+    assert menubar._help_server_lock.acquire(blocking=False)
+    try:
+        holder = []
+
+        def watcher():
+            # Should block until the main thread releases the lock.
+            menubar._reset_idle_timer()
+            holder.append("ran")
+
+        thread = threading.Thread(target=watcher, daemon=True)
+        thread.start()
+        thread.join(timeout=0.3)
+        assert holder == [], "_reset_idle_timer ran without holding the lock"
+    finally:
+        menubar._help_server_lock.release()
+        thread.join(timeout=2)
+        if menubar._help_idle_timer is not None:
+            menubar._help_idle_timer.cancel()
+            menubar._help_idle_timer = None
