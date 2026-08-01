@@ -51,9 +51,19 @@ adding tests that touch the macOS UI path.
   `process._validate_command`.
 - **An app's `about.md` is untrusted HTML.** It is sanitized with `nh3` before
   being written to disk and opened. Do not widen the allowed tag/attribute set.
-- **Never destroy user work.** The removal path only cleans a project that is a
-  clean git checkout (`cleanup.git_clean_project`); anything modified is left
-  untouched. Preserve that guarantee.
+- **Never destroy user work.** The removal path deletes files automatically, with
+  no confirmation and no undo, so `cleanup.git_clean_project` is the highest-risk
+  code in the repo. It only ever runs at a repository **root** (verified against
+  `git rev-parse --show-toplevel`) and only deletes tracked files that match
+  `HEAD`; modified, untracked, and gitignored files are always kept. When
+  changing it, remember that `ls-files` and `diff` anchor their output
+  differently — the two path sets must be comparable or clean-looking files are
+  really modified ones. If a file list cannot be obtained, delete nothing.
+  Preserve that guarantee.
+- **`git` runs over directories Appistry did not create.** A registry `cwd` can
+  name any repo, and git reads command hooks (`core.fsmonitor`, `core.hooksPath`)
+  from that repo's own config. Every `git` invocation must go through
+  `cleanup._GIT_SAFE_FLAGS` and `cleanup._git_safe_env()`.
 - **Update `VERSION` and `help.md` together with behaviour changes.** `help.md`
   is served to users at runtime by `menubar._render_help_page`, so it is product
   copy, not just documentation.

@@ -57,5 +57,7 @@ the app's shortcut from the Start Menu's `Appistry` folder. Within a few seconds
 Appistry will notice, stop the app if it was running, clean up its default installed
 files, and remove it from the menu.
 
-> **Your own work is always safe.** Only the app's default installed files are removed.
+> **Your own work is always safe.** Only the app's default installed files are removed —
+> that is, files committed to its Git repository that you have not changed.
 > Anything you've changed, created, or that the app stored as data is left exactly where it is.
+> If the app's folder isn't the top level of a Git repository, nothing is deleted at all.

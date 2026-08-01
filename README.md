@@ -73,7 +73,12 @@ full integration spec.
 On macOS, drag the app's `.app` bundle from `/Applications` to the Trash. On
 Windows, remove its shortcut from the Start Menu's `Appistry` folder. Appistry
 detects the removal, stops the process, and cleans up its registry entry
-automatically. Your data and modified project files are never touched.
+automatically.
+
+Project cleanup deletes only tracked files that match `HEAD` in the repository
+rooted at the app's `cwd`. Modified, untracked, and gitignored files are always
+kept, and if `cwd` is not a repository root nothing is deleted at all. Your data
+and modified project files are never touched.
 
 ## Contributing
 
