@@ -33,7 +33,8 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-assets="$here/assets"
+# The assets ship inside the package.
+assets="$here/roost/assets"
 
 # A status item is ~18pt tall; @2x is the Retina rendition. Both sizes are
 # generated from the vector source rather than by scaling the 1x bitmap, which
@@ -47,7 +48,7 @@ for svg in "$assets"/*.svg; do
     # The monochrome source: the same paths with every fill forced to black, so
     # the alpha channel macOS keeps carries the full silhouette. Recolouring the
     # vector is exact; post-processing the bitmap's channels would not be.
-    mono="$(mktemp -t "appistry-${name}-mono").svg"
+    mono="$(mktemp -t "roost-${name}-mono").svg"
     trap 'rm -f "$mono"' EXIT
     sed -E 's/(fill|stroke)="#[0-9A-Fa-f]{3,8}"/\1="#000000"/g' "$svg" > "$mono"
 

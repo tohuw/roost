@@ -1,6 +1,13 @@
-# Appistry
+# Roost
 
 One shared status menu bar for the ravens.
+
+> **A note on the name.** This repository is called `appistry` for historical
+> reasons — it was forked from an app launcher of that name — but the project it
+> holds is **Roost**, and that is what it installs: the `roost` command, the
+> `roost` distribution, and its own state directory. The two are separate tools
+> and can be installed and run at the same time. See
+> [Coexistence](#coexistence-with-appistry).
 
 [Huginn](https://github.com/tohuw/huginn) is an AI agent activity console.
 [Muninn](https://github.com/tohuw/muninn) is its agent-history companion. Thought
@@ -8,24 +15,24 @@ and Memory. Each runs as a long-lived local daemon, and each wants somewhere in
 the desktop shell to say what it is doing — but two separate menu bar icons for
 two halves of one thing is two icons too many.
 
-So Appistry is a single macOS menu bar / Windows system tray item that renders
+So Roost is a single macOS menu bar / Windows system tray item that renders
 whichever ravens are running. It reports status; it does not launch anything.
 
 ## How it works
 
 A raven publishes a small JSON **descriptor** into a shared directory saying
-where it is listening and where its token lives. Appistry reads whatever
+where it is listening and where its token lives. Roost reads whatever
 descriptors it finds, fetches each raven's menu over loopback, and draws it.
 
-That is the whole coupling. Appistry has no list of known ravens, no
+That is the whole coupling. Roost has no list of known ravens, no
 configuration naming one, and no code that treats any particular raven
 specially — a raven that is not running simply has no descriptor, and a third
 raven would need no change here at all.
 
-Crucially, Appistry **renders a raven's menu without interpreting it**. It draws
+Crucially, Roost **renders a raven's menu without interpreting it**. It draws
 labels and hands action ids back to the raven that published them. It does not
 know what `focus:abc123` means and never needs to, which is what lets either
-raven change its own menu with no change to Appistry.
+raven change its own menu with no change to Roost.
 
 ```
 [icon]
@@ -45,7 +52,7 @@ raven change its own menu with no change to Appistry.
   Tray icon      ▸
   Help
   ──────────────────
-  Quit Appistry
+  Quit Roost
 ```
 
 ## What it does
@@ -60,7 +67,7 @@ raven change its own menu with no change to Appistry.
 - Lets you pick the tray icon, defaulting to the raven
 - Starts after login via launchd on macOS or the Startup folder on Windows
 
-Everything binds to `127.0.0.1`. Appistry makes no outbound network requests and
+Everything binds to `127.0.0.1`. Roost makes no outbound network requests and
 holds no credential of its own.
 
 ## Security posture
@@ -68,13 +75,13 @@ holds no credential of its own.
 Two invariants are worth stating up front, because they are the reason the design
 looks the way it does.
 
-**Per-raven token isolation.** Each raven owns its token. Appistry reads a token
+**Per-raven token isolation.** Each raven owns its token. Roost reads a token
 from the `token_path` in *that raven's own descriptor* and sends it only to *that
 raven's own port*, under the header that raven asked for. It never caches a token
 across ravens, never sends one raven's credential to another, and never mints one
 on a raven's behalf.
 
-**No relay, by construction.** Appistry serves one loopback page (Help) and
+**No relay, by construction.** Roost serves one loopback page (Help) and
 forwards nothing. A fixed loopback port is reachable by any web page the user has
 open, so that page refuses a foreign `Host`, refuses **any** `Origin`, takes no
 request body, and builds every response header itself. An earlier design in this
@@ -99,7 +106,7 @@ git clone https://github.com/tohuw/appistry.git
 cd appistry
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python appistry.py install
+.venv/bin/python -m roost.cli install
 ```
 
 On Windows (PowerShell):
@@ -107,30 +114,30 @@ On Windows (PowerShell):
 ```powershell
 git clone https://github.com/tohuw/appistry.git
 Set-Location appistry
-py -3 appistry.py install
+py -3 -m roost.cli install
 ```
 
 `install` creates the virtualenv, registers login startup (a launchd agent on
-macOS, a Startup shortcut on Windows), installs the `appistry` CLI, and starts
+macOS, a Startup shortcut on Windows), installs the `roost` CLI, and starts
 the tray. It is safe to re-run.
 
 ## CLI
 
 ```
-appistry ravens        Show what the tray sees, and why
-appistry icon list     List the selectable tray icons
-appistry icon set X    Choose a built-in name or an absolute PNG/ICO path
-appistry icon reset    Revert to the default
-appistry ui            Start the menu bar or system tray
-appistry install       First-time setup
-appistry uninstall     Remove login startup and CLI integration
+roost ravens        Show what the tray sees, and why
+roost icon list     List the selectable tray icons
+roost icon set X    Choose a built-in name or an absolute PNG/ICO path
+roost icon reset    Revert to the default
+roost ui            Start the menu bar or system tray
+roost install       First-time setup
+roost uninstall     Remove login startup and CLI integration
 ```
 
 There is no `register`, `start`, or `stop`: the ravens run themselves. If a raven
-is not in the menu, `appistry ravens` will say why.
+is not in the menu, `roost ravens` will say why.
 
 ```
-$ appistry ravens
+$ roost ravens
 Descriptor directory: /Users/alice/.local/state/ravens
 
   ● Huginn (huginn)
@@ -151,19 +158,64 @@ with neither. Start either and the tray will show it.
 
 Two rules cause most of the trouble:
 
-- **Declare a version range, not a version.** Appistry accepts any raven whose
+- **Declare a version range, not a version.** Roost accepts any raven whose
   declared window overlaps its own. Exact matching is the bug behind huginn issue
   #38, where one routine bump silently disabled every participant.
 - **Publish the descriptor after binding the port, and remove it on exit.** A
   descriptor naming a port that is not yet listening reads as an unreachable
-  raven. A crash that skips removal is still handled — Appistry checks the
+  raven. A crash that skips removal is still handled — Roost checks the
   recorded PID before trusting the file.
 
 ## Uninstalling
 
-`appistry uninstall` removes login startup and the CLI symlink. It does not touch
-the ravens: they are separate daemons with their own lifecycles, and Appistry has
+`roost uninstall` removes login startup and the CLI symlink. It does not touch
+the ravens: they are separate daemons with their own lifecycles, and Roost has
 never owned them.
+
+## Coexistence with Appistry
+
+Roost was forked from **Appistry**, a local app-registry-and-launcher that is a
+separate project and still in use. The two share a git history and nothing else.
+They are designed to run **simultaneously** on the same machine and the same user
+account, so installing one never displaces the other.
+
+That works because Roost owns a distinct name for everything an OS can collide
+on:
+
+| | Appistry | Roost |
+|---|---|---|
+| State directory | `~/.appistry` | `~/.local/state/roost` (`%LOCALAPPDATA%\Roost`) |
+| Console script | `appistry` | `roost` |
+| Distribution | `appistry` | `roost` |
+| Installed modules | `appistry`, `menubar`, `registry`, … (top-level) | `roost` (one package) |
+| launchd label | `com.appistry.menubar` | `com.tohuw.roost` |
+| Single-instance lock | `.menubar.lock` | `roost.lock` |
+| Help port file | `menubar-http-port` | `roost-http-port` |
+| Log | `menubar.log` | `roost.log` |
+| Windows tray launch | `windows_tray.py` | `-m roost.windows_tray` |
+| Windows shortcuts | `Appistry.lnk`, Start Menu `Appistry\` | `Roost.lnk`, Start Menu `Roost\` |
+| Windows mutex | `Local\AppistryWindowsTray` | none (a lock file elects the host) |
+
+**What Roost owns.** Its own state directory and nothing else. That directory
+holds the host lock, the icon preference, the ephemeral help-port file, the tray
+log, and on Windows the tray PID file — all 0600 inside a 0700 directory.
+
+**What Roost never touches.** Anything under `~/.appistry`. Not `registry.toml`,
+not `pids/`, not `secrets/`, and not the `menubar-http-port` or `menubar.log` that
+both projects once wrote there. There is no migration and no compatibility read:
+Roost does not know that directory exists. A test walks this package's AST to
+prove no runtime string names it.
+
+**If you ran an early build of Roost**, its state is still sitting in
+`~/.appistry` and is simply ignored. Nothing is migrated, deliberately — the only
+real setting there is your icon choice, which takes one `roost icon set` to
+restore, and a migration would mean deleting files from inside a live tool's state
+directory to save you that. Two of the filenames were written by both projects
+under the same name, so there is no way to be sure whose they are. Set your icon
+again; delete the orphans by hand if they bother you.
+
+Neither project binds a fixed port. Roost's help server asks the kernel for a
+free one and records it owner-only, which is also why no web page can find it.
 
 ## Contributing
 

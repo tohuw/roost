@@ -13,20 +13,20 @@ permits a raven to decide for itself:
 - **A lower ``host_priority``**, so Muninn sorts after Huginn when both are
   present and sorts first — alone — when Huginn is not running. Neither raven
   knows the other exists; the ordering is entirely these two numbers, and
-  Appistry knows neither name.
-- **No ``token_path``.** Appistry never mints a credential on a raven's behalf,
+  Roost knows neither name.
+- **No ``token_path``.** Roost never mints a credential on a raven's behalf,
   so a raven with no token file gets unauthenticated requests. Whether that is
   acceptable is the raven's decision, and for a read-only history view on
   loopback it reasonably can be. The ``Host``/``Origin`` checks are *not*
   optional either way — they are what stop a web page reaching this port at all.
 - **Link rows rather than actions.** Every row here opens a page against this
   raven's own port. A raven that has nothing to be clicked does not need an
-  action endpoint, and Appistry renders it identically.
+  action endpoint, and Roost renders it identically.
 - **A section that is sometimes empty.** When there is no history the menu has no
-  sections, and Appistry draws the raven with "Nothing to report." — which is
+  sections, and Roost draws the raven with "Nothing to report." — which is
   visibly different from a raven it could not reach.
 
-Documentation, not a library: Appistry does not import this, and neither does the
+Documentation, not a library: Roost does not import this, and neither does the
 real Muninn.
 
 Run it:
@@ -89,7 +89,7 @@ def state_dir() -> Path:
 
 # ── This raven's state ────────────────────────────────────────────────────────
 #
-# Hardcoded on purpose. A real raven reads its own store; Appistry cannot tell.
+# Hardcoded on purpose. A real raven reads its own store; Roost cannot tell.
 
 HISTORY = [
     {"id": "h-1", "title": "Deployed staging", "when": "12m ago"},
@@ -103,11 +103,11 @@ def build_menu() -> dict:
 
     Every row is a link, so this raven needs no action endpoint at all. It still
     declares ``menu`` in its descriptor's endpoints; omitting ``action`` is how a
-    raven says it has nothing to be clicked, and Appistry renders the rows the
+    raven says it has nothing to be clicked, and Roost renders the rows the
     same way either way.
     """
     if not HISTORY:
-        # No sections is a legitimate answer. Appistry draws the raven with
+        # No sections is a legitimate answer. Roost draws the raven with
         # "Nothing to report." — distinct from a raven it could not reach, which
         # gets its own reason instead.
         return {"api_version": MAX_API, "title": DISPLAY, "sections": []}
@@ -141,7 +141,7 @@ def build_menu() -> dict:
 def publish(directory: Path, port: int) -> Path:
     """Write this raven's descriptor atomically.
 
-    Note what is *absent*: no ``token_path`` and no ``token_header``. Appistry
+    Note what is *absent*: no ``token_path`` and no ``token_header``. Roost
     sends an unauthenticated request in that case rather than inventing a
     credential, which is the whole of what "the host never mints a credential on
     a raven's behalf" means in practice.

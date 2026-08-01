@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Appistry is a single-track project. Only the latest commit on `main` is supported.
+Roost is a single-track project. Only the latest commit on `main` is supported.
 
 ## Reporting a Vulnerability
 
@@ -25,16 +25,16 @@ before disclosing publicly.
 
 ## Scope
 
-Appistry runs entirely on the local machine and binds only to `127.0.0.1`. Of
+Roost runs entirely on the local machine and binds only to `127.0.0.1`. Of
 particular interest are:
 
 - Anything that lets a web page or another local process escape the loopback
-  boundary, or that lets Appistry be used as a conduit into a raven. A fixed
+  boundary, or that lets Roost be used as a conduit into a raven. A fixed
   loopback port is reachable by any page the user has open, so the help server
   refuses a foreign `Host` and **any** `Origin`, and forwards nothing.
 - **Credential mixing between ravens.** Each raven owns its own token. Anything
   that could send one raven's credential to another raven's port, cache a token
-  across ravens, or make Appistry mint a credential on a raven's behalf.
+  across ravens, or make Roost mint a credential on a raven's behalf.
 - **Descriptor handling.** A descriptor is a file written by another process and
   is treated as untrusted input. Anything that lets a descriptor field reach a
   menu, a log, a terminal, or a filesystem path unvalidated — including control
@@ -45,5 +45,6 @@ particular interest are:
   misbehave. Anything that lets it block the menu-build path, return an
   unbounded response, or turn a malformed reply into a crash rather than a
   disabled section with a reason.
-- Anything that reads or writes Appistry's own state (`~/.appistry`) with
+- Anything that reads or writes Roost's own state directory (see
+  `roost/paths.py`) with
   permissions that let another local user see or alter it.

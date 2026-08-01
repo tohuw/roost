@@ -1,17 +1,17 @@
 # The Raven Protocol
 
 **Protocol version:** 1
-**Appistry speaks:** 1..1
+**Roost speaks:** 1..1
 **Audience:** anyone implementing a raven
 
-This is the contract between Appistry — one shared status menu bar — and a
+This is the contract between Roost — one shared status menu bar — and a
 *raven*: a long-running local daemon that reports status into that menu.
 [Huginn](https://github.com/tohuw/huginn) and
 [Muninn](https://github.com/tohuw/muninn) both implement it. Nothing here is
 specific to either.
 
 Two runnable reference implementations live in [`examples/`](examples/). They are
-documentation, not libraries: Appistry does not import them and neither raven
+documentation, not libraries: Roost does not import them and neither raven
 does. Read them alongside this document — where the two disagree, the code in
 `examples/` is the one that has been executed.
 
@@ -56,7 +56,7 @@ The rule that makes this hold together:
 > for any raven's name, and it never decides what a raven's menu should contain.
 
 That is why a raven can change its own menu — add a section, rename a row, expose
-a new action — with no change to Appistry and no version bump. Anything that would
+a new action — with no change to Roost and no version bump. Anything that would
 require the host to understand a raven's data does not belong in this protocol.
 
 ---
@@ -172,12 +172,12 @@ it.
 
 **Declare a range. Never compare for equality.**
 
-You declare the inclusive window `min_api..max_api`. Appistry advertises
+You declare the inclusive window `min_api..max_api`. Roost advertises
 `MIN_API_VERSION..API_VERSION` (currently `1..1`) and renders you if the two
 windows **overlap**:
 
 ```
-min_api <= APPISTRY_API_VERSION  AND  max_api >= APPISTRY_MIN_API_VERSION
+min_api <= ROOST_API_VERSION  AND  max_api >= ROOST_MIN_API_VERSION
 ```
 
 This is not stylistic. Exact matching is the bug behind **huginn issue #38**: one
@@ -358,8 +358,8 @@ leaves a window in which it is world-readable.
 ## 7. Host election
 
 **Exactly one process draws the menu.** It is elected by an exclusive lock on a
-single file under Appistry's own state directory (`~/.appistry/menubar.lock`,
-mode 0600): whoever takes it hosts. `flock` on POSIX, an exclusive open on
+single file under Roost's own state directory (`~/.local/state/roost/roost.lock`
+on POSIX, `%LOCALAPPDATA%\Roost\roost.lock` on Windows; mode 0600): whoever takes it hosts. `flock` on POSIX, an exclusive open on
 Windows — both released by the OS if the holder dies, so **there is no stale-lock
 case to reason about**, unlike a PID file.
 
@@ -433,7 +433,7 @@ The reasons the host produces:
 Failure is **not contagious**: one broken raven never prevents another's section
 from rendering, and the host survives a raven that hangs, floods, or lies.
 
-`appistry ravens` prints the same reasons in a terminal.
+`roost ravens` prints the same reasons in a terminal.
 
 ---
 
@@ -471,7 +471,7 @@ menu.
 > loopback value. Any web page could reach it, and what arrived upstream looked
 > locally originated — laundering an attack straight past the app's own
 > `require_local_origin` check. The fix was structural, not a filter: there is no
-> upstream. Appistry's only listener is the Help page, which forwards nothing,
+> upstream. Roost's only listener is the Help page, which forwards nothing,
 > refuses a foreign `Host` and **any** `Origin`, takes no request body, and routes
 > only `GET`.
 >
@@ -526,5 +526,5 @@ Both are stdlib-only and runnable:
 python3 examples/huginn_raven.py
 ```
 
-Start one or both and the tray will show them; `appistry ravens` will explain
+Start one or both and the tray will show them; `roost ravens` will explain
 anything it will not show.

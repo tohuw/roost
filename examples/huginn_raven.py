@@ -5,7 +5,7 @@ A worked, runnable implementation of the raven side of ``SPEC.md``, standing in
 for Huginn — an agent activity console whose menu is a live list of sessions,
 some of which want the user's attention.
 
-Documentation, not a library. Appistry does not import this, and neither does
+Documentation, not a library. Roost does not import this, and neither does
 the real Huginn; each project implements the contract itself. This exists so the
 contract has an executable form to read and to disagree with.
 
@@ -19,7 +19,7 @@ It binds a free loopback port, mints a token, publishes its descriptor, serves
 Four things here are the contract, not this example's preference:
 
 **Declare a range, not a version.** ``min_api``/``max_api`` describe the window
-this raven speaks, and Appistry renders it if that window overlaps its own.
+this raven speaks, and Roost renders it if that window overlaps its own.
 Comparing for equality is the bug behind huginn issue #38 — a routine bump
 silently disabled every participant with nothing on screen to explain it.
 
@@ -30,8 +30,8 @@ descriptor rather than a stale one — though the host also survives the crash
 case, because it checks the recorded PID before trusting the file.
 
 **Own the token.** This raven mints its own, writes it 0600, and names the file
-in its descriptor. Appistry reads it fresh per request and sends it only here.
-Appistry never mints or shares a credential, so authentication is the raven's to
+in its descriptor. Roost reads it fresh per request and sends it only here.
+Roost never mints or shares a credential, so authentication is the raven's to
 provide.
 
 **Defend the port.** A loopback port is reachable by any web page the user has
@@ -65,7 +65,7 @@ MAX_API = 1
 
 #: Higher sorts earlier in the shared menu. Huginn leads when both ravens are
 #: present; when it is absent Muninn's section simply sorts first and the same
-#: menu runs standalone. Appistry does not know either name — the ordering is
+#: menu runs standalone. Roost does not know either name — the ordering is
 #: entirely this number.
 HOST_PRIORITY = 100
 
@@ -111,7 +111,7 @@ def state_dir() -> Path:
 # ── This raven's state ────────────────────────────────────────────────────────
 #
 # Hardcoded on purpose: a real raven has its own model and its own store, and the
-# whole point of the contract is that Appistry cannot tell the difference.
+# whole point of the contract is that Roost cannot tell the difference.
 
 SESSIONS = [
     {"id": "s-1", "title": "Approve: deploy to staging", "agent": "claude",
@@ -130,7 +130,7 @@ def build_menu() -> dict:
 
     The host renders these labels and hands the ``id`` values back untouched. It
     does not know what ``focus:s-1`` means, and it must not need to — which is
-    what lets this function change freely without any change to Appistry.
+    what lets this function change freely without any change to Roost.
 
     Rows carry either an ``id`` (POSTed back to ``/api/menu/action``) or a
     ``url`` (opened as ``http://127.0.0.1:{port}{url}``). A row with neither
@@ -181,7 +181,7 @@ def build_menu() -> dict:
         # present, so a raven can retitle its own section as its state changes.
         "title": DISPLAY,
         # The host shows this beside the name and sums it across ravens. It is
-        # this raven's own number; Appistry does not compute it and does not know
+        # this raven's own number; Roost does not compute it and does not know
         # what it counts.
         "badge": len(attention),
         "sections": sections,

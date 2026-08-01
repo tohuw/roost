@@ -1,4 +1,4 @@
-# Agent notes for Appistry
+# Agent notes for Roost
 
 Guidance for AI coding agents working in this repository. Humans should read
 [README.md](README.md) and [SPEC.md](SPEC.md) instead.
@@ -22,16 +22,18 @@ mistake to avoid.
 Everything platform-neutral is shared; only the last mile is per-platform.
 
 ```
-ravens.py ── descriptors: discovery, validation, liveness
-menu_spec.py ── the menu-as-data parser
-raven_client.py ── bounded per-raven HTTP with token isolation
+roost/ravens.py ── descriptors: discovery, validation, liveness
+roost/menu_spec.py ── the menu-as-data parser
+roost/raven_client.py ── bounded per-raven HTTP with token isolation
       │
-host.py ── host election (the lock) + menu aggregation
+roost/host.py ── host election (the lock) + menu aggregation
       │
-tray.py ── the platform-neutral row list: WHAT the menu contains
-      ├── menubar.py       (macOS, rumps)
-      └── windows_tray.py  (Windows, pystray)
+roost/tray.py ── the platform-neutral row list: WHAT the menu contains
+      ├── roost/menubar.py       (macOS, rumps)
+      └── roost/windows_tray.py  (Windows, pystray)
 ```
+
+All paths below are relative to `roost/`.
 
 | File | Role |
 |---|---|
@@ -45,14 +47,18 @@ tray.py ── the platform-neutral row list: WHAT the menu contains
 | `windows_support.py` | Windows shortcuts, user PATH/environment, tray process |
 | `help_server.py` | The one loopback listener: the Help page and `/api/status` |
 | `icons.py` | Selectable tray icon, defaulting to the raven |
-| `paths.py` | `~/.appistry` and the owner-only write helpers |
+| `paths.py` | Roost's own state directory and the owner-only write helpers |
 | `sanitize.py` | Strips escapes/controls/bidi from untrusted strings |
-| `appistry.py` | CLI: `install`, `uninstall`, `ui`, `ravens`, `icon` |
-| `examples/` | Two runnable reference ravens — documentation, not libraries |
+| `cli.py` | CLI: `install`, `uninstall`, `ui`, `ravens`, `icon` |
+| `__init__.py` | The product name and slug; the package docstring explains why the package exists |
+| `../examples/` | Two runnable reference ravens — documentation, not libraries |
 
 `menubar.py` guards its macOS-only imports so it stays importable elsewhere.
 `windows_support.py` imports Windows-only packages *inside functions* for the same
 reason: its path and argument logic is exercised by the shared unit suite.
+
+Everything is inside the `roost` package. That is not style — see
+[Coexistence](#coexistence-is-a-constraint-not-a-preference) below.
 
 ## Testing
 
@@ -114,7 +120,7 @@ either tray's rendering, that file is the one that catches the drift.
   enforced on the read (not on the declared `Content-Length`), no redirects. A hung
   raven must degrade to a disabled section, never to a frozen menu.
 
-- **Appistry's own state is owner-only.** Everything under `~/.appistry` — the host
+- **Roost's own state is owner-only.** Everything in Roost's state directory — the host
   lock, the help port file, the tray PID file, the icon config — is 0600 under a
   0700 directory, created with restrictive permissions rather than chmodded after.
   Use `paths.secure_dir` / `paths.atomic_write_text`; do not open state files
@@ -138,9 +144,49 @@ either tray's rendering, that file is the one that catches the drift.
   contract without reaching into its consumers.
 
 - **The raven icon is a licence obligation.** *Raven* by Lorc, game-icons.net, CC
-  BY 3.0. `assets/CREDITS.md` must keep crediting it for as long as the art is
-  here. If the art goes, the credit goes with it; if art is added, credit it before
-  shipping.
+  BY 3.0. `roost/assets/CREDITS.md` must keep crediting it for as long as the art
+  is here. If the art goes, the credit goes with it; if art is added, credit it
+  before shipping.
 
 - **No internal names.** This is a public repository derived from an internal one.
   The scrub list is in the commit history; grep before committing.
+
+## Coexistence is a constraint, not a preference
+
+This repository is named `appistry` and the project inside it is **Roost**. The
+mismatch is deliberate: Roost was forked from a separate app launcher called
+Appistry which is *still in use on the same machines*, and the two must be
+installable and runnable at the same time. The repository name is history; the
+runtime identity is not.
+
+Concretely, this is why the code looks the way it does:
+
+- **Everything lives in the `roost` package.** Both projects previously installed
+  top-level `appistry`, `menubar`, `windows_support`, and `windows_tray` modules,
+  so whichever was installed second overwrote the other's. Do not add a `.py` file
+  at the repository root; a test fails if you do.
+
+- **Every name Roost owns is prefixed.** The state directory, the lock, the port
+  file, the config, the log, the PID file, the launchd label, the Windows shortcut
+  and Start Menu folder, the console script, the distribution, the pystray tray
+  name, and the `/api/status` service string. When you add a file to the state
+  directory, name it for this project — not for the surface it serves. `menubar.log`
+  and `menubar-http-port` were exactly that mistake, and both were names the other
+  project had already taken.
+
+- **Never read, move, or remove anything under `~/.appistry`.** It holds another
+  live tool's `registry.toml`, `pids/`, and `secrets/`. There is no migration from
+  it and no compatibility read, including for files an early Roost build wrote
+  there — two of those filenames are ambiguous between the projects, so there is no
+  safe way to tell whose a given file is. `roost/paths.py` documents the reasoning.
+
+- **`tests/unit/test_coexistence.py` pins all of it.** The other project's
+  well-known values are literal constants there, each commented with the file it
+  came from, because that codebase is private and cannot be imported. If you rename
+  something this project owns, that file is what tells you whether you just created
+  a collision. Do not weaken an assertion in it to make a change pass.
+
+- **The ravens descriptor directory is the exception.** `~/.local/state/ravens`
+  and `%LOCALAPPDATA%\Ravens` are a cross-project contract that Huginn and Muninn
+  write into. It is not Roost's to rename, and `ravens.state_dir()` must keep
+  resolving exactly what it resolves today.
