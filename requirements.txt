@@ -1,8 +1,7 @@
 rumps;sys_platform=="darwin"
-pywebview==6.2.1
-# markdown and nh3 render and then sanitize registry-supplied about.md, so the
-# sanitizer version has to be reproducible — a floating range would let the
-# security boundary shift between installs.
+# markdown and nh3 render and then sanitize the help page, so the sanitizer
+# version has to be reproducible — a floating range would let a security
+# boundary shift between installs.
 markdown==3.10.3
 nh3==0.3.6
 tomli>=2.0.0;python_version<"3.11"
@@ -10,5 +9,10 @@ pyobjc-core<12.0;sys_platform=="darwin" and python_version<"3.10"
 pystray==0.19.5;sys_platform=="win32"
 Pillow==12.3.0;sys_platform=="win32" and python_version>="3.10"
 pywin32==312;sys_platform=="win32"
+# psutil backs the PID-reuse-safe liveness check: on Windows a match on PID
+# alone is not evidence, so a descriptor's recorded start time is cross-checked
+# against the OS's own record. On POSIX it is optional — ravens.pid_is_alive
+# degrades to "cannot corroborate", which never turns a live raven into a dead
+# one.
 psutil==7.2.2;sys_platform=="win32"
 pytest>=8.0.0

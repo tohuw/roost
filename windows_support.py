@@ -1,30 +1,31 @@
-"""Windows installation, shortcut, environment, and tray helpers for Appistry.
+"""Windows installation, startup, environment, and tray helpers.
 
-This module deliberately imports Windows-only packages inside functions so the
-shared unit suite can import and exercise its pure path/argument logic on macOS.
+What is left here is only what a *status* tray needs: install and remove the two
+Appistry shortcuts (login startup and Start Menu), keep the process's environment
+in step with the user's Environment registry values, and start or stop the tray
+process. There are no per-app shortcuts and no icon conversion for them, because
+there are no apps to launch — the ravens are long-running daemons that publish
+descriptors, and the tray reports on them rather than starting them.
+
+Windows-only packages are imported inside functions on purpose, so the shared
+unit suite can exercise the pure path and argument logic on any platform.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import ntpath
 import os
-# Process launches in this module use fixed local executables and argv lists.
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-import registry
-from registry import AppEntry
-
+import help_server
+import paths
 
 _STARTUP_SHORTCUT = "Appistry.lnk"
 _TRAY_PID_FILE = "windows-tray.pid"
-_CONTROL_PORT_FILE = "menubar-http-port"
-_MAX_ICON_PIXELS = 16_777_216
 _WINDOWS_CREATE_FLAGS = (
     getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     | getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -60,18 +61,19 @@ def appistry_shortcuts_dir() -> Path:
     return start_menu_programs_dir() / "Appistry"
 
 
-def registered_shortcut_path(entry: AppEntry) -> Path:
-    """Return a contained Start Menu shortcut path for a registry entry."""
-    safe_name = registry.bundle_name_for(entry.name, entry.id)
-    safe_id = registry.validate_app_id(entry.id)
-    base = appistry_shortcuts_dir().resolve()
-    path = (base / f"{safe_name} ({safe_id}).lnk").resolve()
-    path.relative_to(base)
-    return path
-
-
 def tray_pid_path() -> Path:
-    return registry.APPISTRY_DIR / _TRAY_PID_FILE
+    return paths.APPISTRY_DIR / _TRAY_PID_FILE
+
+
+def write_tray_pid() -> None:
+    """Record the tray's PID, owner-only.
+
+    Only ``stop_tray`` reads this, and it verifies the command line before
+    signalling — so the file is a hint, not an authority. It is still written
+    0600: on a shared machine another local user has no business enumerating
+    which of this user's processes is the tray.
+    """
+    paths.atomic_write_text(tray_pid_path(), str(os.getpid()))
 
 
 def _venv_executable(appistry_dir: Path, *, windowed: bool = False) -> Path:
@@ -110,91 +112,11 @@ def _create_shortcut(
     return path
 
 
-def _safe_icon_source(entry: AppEntry) -> Path | None:
-    if not entry.icon:
-        return None
-    source = Path(entry.icon)
-    if not source.is_absolute():
-        base = Path(entry.cwd).resolve()
-        source = (base / source).resolve()
-        try:
-            source.relative_to(base)
-        except ValueError:
-            return None
-    else:
-        source = source.resolve()
-    if source.suffix.lower() not in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico"}:
-        return None
-    try:
-        if not source.is_file() or source.stat().st_size > 10 * 1024 * 1024:
-            return None
-    except OSError:
-        return None
-    return source
-
-
-def _prepare_shortcut_icon(entry: AppEntry) -> Path | None:
-    source = _safe_icon_source(entry)
-    if source is None:
-        return None
-    icon_dir = registry.APPISTRY_DIR / "shortcut-icons"
-    icon_dir.mkdir(parents=True, exist_ok=True)
-    destination = icon_dir / f"{registry.validate_app_id(entry.id)}.ico"
-    if source.suffix.lower() == ".ico":
-        import shutil
-
-        shutil.copy2(source, destination)
-        return destination
-    try:
-        from PIL import Image
-
-        with Image.open(source) as image:
-            if image.width * image.height > _MAX_ICON_PIXELS:
-                return None
-            image.convert("RGBA").save(
-                destination,
-                format="ICO",
-                sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)],
-            )
-        return destination
-    except (OSError, ValueError):
-        destination.unlink(missing_ok=True)
-        return None
-
-
-def build_registered_shortcut(entry: AppEntry, appistry_dir: Path) -> Path:
-    """Create a Start Menu launcher that starts (if needed) and opens an app."""
-    safe_id = registry.validate_app_id(entry.id)
-    remove_registered_shortcut(entry)
-    return _create_shortcut(
-        registered_shortcut_path(entry),
-        target=_venv_executable(appistry_dir, windowed=True),
-        arguments=_shortcut_arguments([str(appistry_dir / "appistry.py"), "launch", safe_id]),
-        working_directory=appistry_dir,
-        description=f"Open {entry.name} with Appistry",
-        icon=_prepare_shortcut_icon(entry),
-    )
-
-
-def remove_registered_shortcut(entry: AppEntry) -> None:
-    safe_id = registry.validate_app_id(entry.id)
-    directory = appistry_shortcuts_dir()
-    if directory.is_dir():
-        for shortcut in directory.glob(f"* ({safe_id}).lnk"):
-            try:
-                shortcut.resolve().relative_to(directory.resolve())
-            except ValueError:
-                continue
-            shortcut.unlink(missing_ok=True)
-    icon = registry.APPISTRY_DIR / "shortcut-icons" / f"{safe_id}.ico"
-    icon.unlink(missing_ok=True)
-
-
 def install_appistry_shortcuts(appistry_dir: Path) -> tuple[Path, Path]:
-    """Install the login-start and Start Menu shortcuts for the tray app."""
+    """Install the login-start and Start Menu shortcuts for the tray."""
     target = _venv_executable(appistry_dir, windowed=True)
     args = _shortcut_arguments([str(appistry_dir / "windows_tray.py")])
-    icon = _prepare_appistry_icon(appistry_dir)
+    icon = prepare_tray_icon()
     startup = _create_shortcut(
         startup_dir() / _STARTUP_SHORTCUT,
         target=target,
@@ -214,23 +136,37 @@ def install_appistry_shortcuts(appistry_dir: Path) -> tuple[Path, Path]:
     return startup, menu
 
 
-def _prepare_appistry_icon(appistry_dir: Path) -> Path | None:
-    source = appistry_dir / "appistry_icon.png"
-    if not source.is_file():
+def prepare_tray_icon() -> Path | None:
+    """Convert the configured tray icon to an ICO for the Windows shortcuts.
+
+    A ``.lnk`` needs an ICO; the checked-in assets are PNG. The conversion is
+    best-effort and returns None on any failure — a shortcut with the default
+    Python icon is a cosmetic problem, while refusing to create the shortcut
+    would mean the tray never starts at login.
+    """
+    import icons
+
+    choice = icons.resolve()
+    if choice is None:
         return None
-    destination = registry.APPISTRY_DIR / "appistry_icon.ico"
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    if choice.path.suffix.lower() == ".ico":
+        return choice.path
+    destination = paths.appistry_dir() / "tray-icon.ico"
     try:
         from PIL import Image
 
-        with Image.open(source) as image:
+        with Image.open(choice.path) as image:
             image.convert("RGBA").save(
                 destination,
                 format="ICO",
                 sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)],
             )
         return destination
-    except (OSError, ValueError):
+    except (ImportError, OSError, ValueError):
+        # ImportError included deliberately: Pillow is a Windows-only pin, and
+        # this function is also reachable from the shared unit suite and from an
+        # install that has not finished resolving dependencies. A missing Pillow
+        # must degrade to "no custom shortcut icon", not abort the install.
         destination.unlink(missing_ok=True)
         return None
 
@@ -238,14 +174,14 @@ def _prepare_appistry_icon(appistry_dir: Path) -> Path | None:
 def uninstall_shortcuts() -> None:
     (startup_dir() / _STARTUP_SHORTCUT).unlink(missing_ok=True)
     (appistry_shortcuts_dir() / _STARTUP_SHORTCUT).unlink(missing_ok=True)
-    for entry in registry.load():
-        remove_registered_shortcut(entry)
     try:
         appistry_shortcuts_dir().rmdir()
     except OSError:
         log.debug("Appistry Start Menu folder is not empty", exc_info=True)
-    (registry.APPISTRY_DIR / "appistry_icon.ico").unlink(missing_ok=True)
+    (paths.APPISTRY_DIR / "tray-icon.ico").unlink(missing_ok=True)
 
+
+# ── User PATH and environment ─────────────────────────────────────────────────
 
 def _normalise_path_entry(value: str) -> str:
     expanded = os.path.expandvars(value.strip().strip('"'))
@@ -340,7 +276,7 @@ def _read_registry_path() -> str:
     _require_windows()
     import winreg
 
-    paths: list[str] = []
+    entries: list[str] = []
     locations = (
         (
             winreg.HKEY_LOCAL_MACHINE,
@@ -353,14 +289,19 @@ def _read_registry_path() -> str:
             with winreg.OpenKey(hive, location) as key:
                 value, value_type = winreg.QueryValueEx(key, "Path")
                 if value_type in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) and value:
-                    paths.append(os.path.expandvars(str(value)))
+                    entries.append(os.path.expandvars(str(value)))
         except OSError:
             continue
-    return os.pathsep.join(paths)
+    return os.pathsep.join(entries)
 
 
 def refresh_user_environment() -> None:
-    """Pick up user Environment registry changes without restarting the tray."""
+    """Pick up user Environment registry changes without restarting the tray.
+
+    A raven's descriptor directory can be relocated with ``RAVENS_STATE_DIR``. If
+    the user sets that after the tray started, the tray would keep watching the
+    old location until the next sign-in, so the value is re-read here.
+    """
     if not is_windows():
         return
     current = _read_registry_environment()
@@ -386,17 +327,26 @@ def refresh_user_environment() -> None:
         _managed_environment["PATH"] = effective_path
 
 
-def control_server_running() -> bool:
-    path = registry.APPISTRY_DIR / _CONTROL_PORT_FILE
+# ── Tray process ──────────────────────────────────────────────────────────────
+
+def tray_is_running() -> bool:
+    """Return True if a tray process is answering on its recorded help port.
+
+    The port file alone proves nothing — a crashed tray leaves it behind — so the
+    endpoint is actually probed, and the reply must identify Appistry rather than
+    whatever unrelated service inherited the port.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    port = help_server.active_port()
+    if port is None:
+        return False
     try:
-        port = int(path.read_text(encoding="utf-8").strip())
-        if not 1 <= port <= 65535:
-            return False
-        url = f"http://127.0.0.1:{port}/api/status"
-        # The URL is fixed to loopback and the port is range-checked above.
+        # Fixed loopback URL; the port was range-checked by active_port().
         with urllib.request.urlopen(
-            url,
-            timeout=0.5,
+            f"http://127.0.0.1:{port}/api/status", timeout=0.5
         ) as response:
             payload = json.loads(response.read(1024))
         return payload == {"service": "appistry", "ok": True}
@@ -407,11 +357,11 @@ def control_server_running() -> bool:
 def start_tray(appistry_dir: Path, *, wait: bool = True) -> bool:
     """Start the Windows tray without a console window."""
     _require_windows()
-    if control_server_running():
+    if tray_is_running():
         return True
     target = _venv_executable(appistry_dir, windowed=True)
     try:
-        # Both paths are derived from this trusted installation directory.
+        # Both paths derive from this trusted installation directory.
         proc = subprocess.Popen(
             [str(target), str(appistry_dir / "windows_tray.py")],
             cwd=str(appistry_dir),
@@ -426,7 +376,7 @@ def start_tray(appistry_dir: Path, *, wait: bool = True) -> bool:
     if wait:
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
-            if control_server_running():
+            if tray_is_running():
                 return True
             if proc.poll() is not None:
                 return False
@@ -437,7 +387,7 @@ def start_tray(appistry_dir: Path, *, wait: bool = True) -> bool:
 
 
 def _terminate_spawned_process(proc) -> None:
-    """Terminate a tray child that failed to establish its control endpoint."""
+    """Terminate a tray child that never established its help endpoint."""
     if proc.poll() is not None:
         return
     try:
@@ -454,7 +404,13 @@ def _terminate_spawned_process(proc) -> None:
 
 
 def stop_tray() -> bool:
-    """Stop only a verified Appistry Windows tray process."""
+    """Stop only a verified Appistry tray process.
+
+    The PID comes from a file, so it is not trusted: the command line is checked
+    before anything is signalled. A PID file is also the one place a recycled PID
+    can do real damage, so a non-positive value is refused outright — ``-1``
+    would address every process this user can signal.
+    """
     path = tray_pid_path()
     try:
         pid = int(path.read_text(encoding="utf-8").strip())
@@ -463,10 +419,23 @@ def stop_tray() -> bool:
     try:
         import psutil
     except ImportError:
+        # Without psutil there is no way to confirm the PID names the tray, and
+        # signalling an unverified PID is exactly the mistake this guards.
+        log.warning("psutil is unavailable; refusing to signal an unverified PID")
+        return False
+    if pid <= 0:
+        log.warning("Refusing a non-positive PID in the tray PID file")
+        path.unlink(missing_ok=True)
         return False
     try:
         proc = psutil.Process(pid)
-        command = [Path(part).name.casefold() for part in proc.cmdline()]
+        # ntpath, not pathlib: these are always Windows command lines, and
+        # pathlib on a POSIX host does not treat a backslash as a separator — so
+        # the whole argument would come back as the "filename" and the check
+        # would silently never match. Using ntpath keeps this verification
+        # exercisable by the shared unit suite, which is the point of the
+        # module's platform-neutral logic.
+        command = [ntpath.basename(part).casefold() for part in proc.cmdline()]
         if "windows_tray.py" not in command:
             path.unlink(missing_ok=True)
             return False
@@ -485,34 +454,3 @@ def stop_tray() -> bool:
         return True
     except psutil.AccessDenied:
         return False
-
-
-class NamedMutex:
-    """Process-lifetime Windows named mutex used by the tray single-instance guard."""
-
-    def __init__(self, name: str = r"Local\AppistryWindowsTray"):
-        self.name = name
-        self.handle = None
-
-    def acquire(self) -> bool:
-        _require_windows()
-        import win32api  # type: ignore[import-not-found]
-        import win32event  # type: ignore[import-not-found]
-        import winerror  # type: ignore[import-not-found]
-
-        self.handle = win32event.CreateMutex(None, False, self.name)
-        if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
-            win32api.CloseHandle(self.handle)
-            self.handle = None
-            return False
-        return True
-
-    def release(self) -> None:
-        if self.handle is None:
-            return
-        try:
-            import win32api  # type: ignore[import-not-found]
-
-            win32api.CloseHandle(self.handle)
-        finally:
-            self.handle = None

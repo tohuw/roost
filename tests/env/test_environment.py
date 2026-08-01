@@ -1,12 +1,13 @@
-"""
-Environment tests for Appistry.
+"""Environment tests: the real installation, with real dependencies.
 
-Verifies the installation works — real dependencies, no mocks. Starts the
-actual menubar help server (or reuses one already running on this machine),
-hits it over real HTTP, and verifies clean shutdown.
+Everything else in the suite is hermetic. This module verifies that the venv
+actually resolves the platform's tray dependencies and that the real help server
+starts, answers over real HTTP, and shuts down cleanly — the things a mock cannot
+tell you.
 
-Run: pytest tests/env/ -v
+Run: pytest tests/env -v
 """
+
 import json
 import os
 import subprocess
@@ -18,23 +19,22 @@ from pathlib import Path
 
 import pytest
 
-APP_DIR      = Path(__file__).resolve().parents[2]
-VENV_PYTHON  = (
+APP_DIR = Path(__file__).resolve().parents[2]
+VENV_PYTHON = (
     APP_DIR / ".venv" / "Scripts" / "python.exe"
     if sys.platform == "win32"
     else APP_DIR / ".venv" / "bin" / "python"
 )
-PORT_FILE    = Path.home() / ".appistry" / "menubar-http-port"
+PORT_FILE = Path.home() / ".appistry" / "menubar-http-port"
 
-# The subprocess entry point for a fresh, isolated help-server instance.
-# Runs menubar's real server start/shutdown functions in-process — no signal
-# plumbing needed since they're plain function calls, not a CLI.
+# A fresh, isolated help-server instance. The module's start/shutdown are plain
+# function calls, so no signal plumbing is needed.
 _SERVER_SCRIPT = """
 import sys, time
 sys.path.insert(0, {app_dir!r})
-import menubar
+import help_server
 
-port = menubar._help_server_start()
+port = help_server.start()
 print(f"PORT {{port}}", flush=True)
 try:
     while True:
@@ -42,7 +42,7 @@ try:
 except KeyboardInterrupt:
     pass
 finally:
-    menubar._help_server_shutdown()
+    help_server.shutdown()
 """
 
 
@@ -66,10 +66,9 @@ def _isolated_process_env(isolated_home: Path, *, platform: str = sys.platform) 
 def _running_instance() -> str | None:
     """Return the URL of an already-running Appistry help server, if any.
 
-    Probing first (per tq-2 rule #2) avoids both a bind conflict — Appistry's
-    platform-native instance guard means a second live tray process can't start
-    anyway, and clobbering the real ~/.appistry/menubar-http-port that a
-    live instance depends on for `appistry open`.
+    Probing first avoids clobbering the real ``~/.appistry/menubar-http-port``
+    that a live tray depends on — and the host lock means a second tray could not
+    start anyway.
     """
     if not PORT_FILE.exists():
         return None
@@ -87,21 +86,17 @@ def _running_instance() -> str | None:
 
 @pytest.fixture(scope="module")
 def help_server_url(tmp_path_factory):
-    """
-    Probe for a running instance first; only spawn a new one if needed.
+    """Probe for a running instance first; only spawn a new one if needed.
 
-    A spawned instance runs with an isolated HOME so it never touches the
-    real ~/.appistry state (registry, PID files, or the live port file) of
-    whatever Appistry installation happens to be running on this machine.
+    A spawned instance runs with an isolated HOME so it never touches the real
+    ``~/.appistry`` state of whatever installation is running on this machine.
     """
     existing = _running_instance()
     if existing:
         yield existing
         return
 
-    isolated_home = tmp_path_factory.mktemp("appistry-home")
-    env = _isolated_process_env(isolated_home)
-
+    env = _isolated_process_env(tmp_path_factory.mktemp("appistry-home"))
     proc = subprocess.Popen(
         [str(VENV_PYTHON), "-u", "-c", _SERVER_SCRIPT.format(app_dir=str(APP_DIR))],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
@@ -120,20 +115,19 @@ def help_server_url(tmp_path_factory):
             break
     if port is None:
         proc.kill()
-        raise AssertionError("Appistry help server did not report a port in time")
+        raise AssertionError("The help server did not report a port in time")
 
     url = f"http://127.0.0.1:{port}"
     for _ in range(30):
         try:
-            status, _ = _get(url, timeout=1.0)
-            if status == 200:
+            if _get(url, timeout=1.0)[0] == 200:
                 break
         except Exception:
             pass
         time.sleep(0.3)
     else:
         proc.kill()
-        raise AssertionError("Appistry help server did not become ready in time")
+        raise AssertionError("The help server did not become ready in time")
 
     yield url
 
@@ -142,13 +136,12 @@ def help_server_url(tmp_path_factory):
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
-        pytest.fail("Appistry help server did not shut down cleanly")
+        pytest.fail("The help server did not shut down cleanly")
 
 
-# ── Installation checks (no server needed) ────────────────────────────────
+# ── Installation ─────────────────────────────────────────────────────────────
 
 def test_venv_exists():
-    """The virtual environment must be present."""
     assert VENV_PYTHON.exists(), (
         f"No venv at {VENV_PYTHON}. "
         "Run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
@@ -172,8 +165,7 @@ def test_core_imports():
         else "import rumps, nh3"
     )
     result = subprocess.run(
-        [str(VENV_PYTHON), "-c", platform_imports],
-        capture_output=True, text=True,
+        [str(VENV_PYTHON), "-c", platform_imports], capture_output=True, text=True
     )
     assert result.returncode == 0, (
         f"Core import failed: {result.stderr.strip()}\n"
@@ -181,21 +173,41 @@ def test_core_imports():
     )
 
 
-def test_native_search_field_constructs():
-    """The real AppKit search control used by the menu can be constructed."""
-    if sys.platform == "win32":
-        pytest.skip("Windows uses the tkinter search window instead of AppKit")
-    script = """
-import menubar
-controller = menubar._SearchFieldController.alloc().initWithApp_(None)
-item, field = menubar._make_search_menu_item(controller, "san")
-assert field.stringValue() == "san"
-assert field.placeholderString() == "Search running apps"
-assert field.accessibilityLabel() == "Search running apps"
-assert str(field.action()) == "search:"
-assert field.delegate() == controller
-assert item._menuitem.view() is not None
-"""
+def test_the_shared_raven_layer_imports():
+    """Every module both trays depend on must import with no display present."""
+    result = subprocess.run(
+        [str(VENV_PYTHON), "-c",
+         "import sys; sys.path.insert(0, '.'); "
+         "import ravens, menu_spec, raven_client, host, icons, paths, "
+         "sanitize, tray, help_server"],
+        capture_output=True, text=True, cwd=str(APP_DIR),
+    )
+    assert result.returncode == 0, result.stderr.strip()
+
+
+def test_the_real_tray_module_imports():
+    """The platform's tray entry point imports with installed dependencies."""
+    modules = (
+        "import windows_support, windows_tray"
+        if sys.platform == "win32"
+        else "import menubar"
+    )
+    result = subprocess.run(
+        [str(VENV_PYTHON), "-c", modules],
+        capture_output=True, text=True, cwd=str(APP_DIR),
+    )
+    assert result.returncode == 0, result.stderr.strip()
+
+
+def test_the_real_tray_icon_loads():
+    """The checked-in asset must actually decode: nothing rasterizes at runtime."""
+    script = (
+        "import sys; sys.path.insert(0, '.'); import icons\n"
+        "choice = icons.resolve()\n"
+        "assert choice is not None, 'no icon resolved'\n"
+        "assert choice.path.is_file(), choice.path\n"
+        "assert choice.path.stat().st_size > 0\n"
+    )
     result = subprocess.run(
         [str(VENV_PYTHON), "-c", script],
         capture_output=True, text=True, cwd=str(APP_DIR),
@@ -203,30 +215,7 @@ assert item._menuitem.view() is not None
     assert result.returncode == 0, result.stderr.strip()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows tray smoke test")
-def test_windows_tray_runtime_imports():
-    """The real Windows tray entry point imports with installed dependencies."""
-    result = subprocess.run(
-        [str(VENV_PYTHON), "-c", "import menubar, windows_support, windows_tray"],
-        capture_output=True,
-        text=True,
-        cwd=str(APP_DIR),
-    )
-    assert result.returncode == 0, result.stderr.strip()
-
-
-def test_registry_module_importable():
-    """registry.py and process.py import cleanly from the venv."""
-    result = subprocess.run(
-        [str(VENV_PYTHON), "-c",
-         "import sys; sys.path.insert(0, '.'); import registry, process"],
-        capture_output=True, text=True, cwd=str(APP_DIR),
-    )
-    assert result.returncode == 0, result.stderr.strip()
-
-
 def test_cli_help_exits_zero():
-    """appistry.py --help exits 0 and does not crash."""
     result = subprocess.run(
         [str(VENV_PYTHON), str(APP_DIR / "appistry.py"), "--help"],
         capture_output=True, text=True, cwd=str(APP_DIR),
@@ -234,39 +223,51 @@ def test_cli_help_exits_zero():
     assert result.returncode == 0, result.stderr.strip()
 
 
-def test_cli_list_exits_without_crash():
-    """appistry list exits 0 (empty registry is valid)."""
+def test_cli_ravens_exits_without_crash(tmp_path):
+    """An empty (or absent) descriptor directory is a valid, reportable state."""
+    env = _isolated_process_env(tmp_path)
+    env["RAVENS_STATE_DIR"] = str(tmp_path / "ravens")
     result = subprocess.run(
-        [str(VENV_PYTHON), str(APP_DIR / "appistry.py"), "list"],
-        capture_output=True, text=True, cwd=str(APP_DIR),
+        [str(VENV_PYTHON), str(APP_DIR / "appistry.py"), "ravens"],
+        capture_output=True, text=True, cwd=str(APP_DIR), env=env,
     )
     assert result.returncode == 0, result.stderr.strip()
+    assert "Descriptor directory" in result.stdout
 
 
-# ── Real server lifecycle ──────────────────────────────────────────────────
+# ── Real server lifecycle ────────────────────────────────────────────────────
 
 def test_server_starts_and_root_responds(help_server_url):
-    """The real help server starts and its root page responds HTTP 200."""
     status, body = _get(help_server_url)
     assert status == 200
     assert b"Appistry Help" in body
 
 
-def test_server_identifies_appistry_control_service(help_server_url):
-    """The status endpoint distinguishes Appistry from an unrelated stale-port service."""
+def test_server_identifies_appistry(help_server_url):
+    """Distinguishes a live tray from an unrelated service on a stale port."""
     status, body = _get(f"{help_server_url}/api/status")
     assert status == 200
     assert json.loads(body) == {"service": "appistry", "ok": True}
 
 
-# ── Graceful shutdown ───────────────────────────────────────────────────────
+def test_the_real_server_rejects_a_foreign_host(help_server_url):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _get(help_server_url, headers={"Host": "attacker.example.com"})
+    assert exc_info.value.code == 400
+    exc_info.value.close()
+
+
+def test_the_real_server_rejects_any_origin(help_server_url):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _get(help_server_url, headers={"Origin": "https://evil.example"})
+    assert exc_info.value.code == 403
+    exc_info.value.close()
+
 
 def test_server_still_alive_before_teardown(help_server_url):
+    """Proves the server did not crash mid-run.
+
+    Clean shutdown is verified by the fixture's teardown (the subprocess exits
+    without needing SIGKILL) when this module owns the spawned instance.
     """
-    The server must still be reachable at this point in the suite — proves
-    it did not crash mid-run. Clean shutdown itself is verified by the
-    help_server_url fixture's teardown (subprocess exits without needing
-    SIGKILL) when this test module owns the spawned instance.
-    """
-    status, _ = _get(help_server_url)
-    assert status == 200
+    assert _get(help_server_url)[0] == 200

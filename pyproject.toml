@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "appistry"
 dynamic = ["version"]
-description = "Local app registry and macOS/Windows tray launcher"
+description = "One shared status menu bar for the ravens: Huginn and Muninn"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [
   { name = "Ron Scott-Adams" },
 ]
-keywords = ["menubar", "system-tray", "macos", "windows", "launcher", "local-apps"]
+keywords = ["menubar", "system-tray", "macos", "windows", "status", "agents"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: MacOS X",
@@ -42,12 +42,16 @@ appistry = "appistry:main"
 [tool.setuptools]
 py-modules = [
   "appistry",
-  "cleanup",
-  "hooks",
-  "launch",
+  "help_server",
+  "host",
+  "icons",
+  "menu_spec",
   "menubar",
-  "process",
-  "registry",
+  "paths",
+  "raven_client",
+  "ravens",
+  "sanitize",
+  "tray",
   "windows_support",
   "windows_tray",
 ]

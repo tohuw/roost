@@ -1,77 +1,95 @@
-"""Windows-host integration smoke tests for native Appistry behavior."""
+"""Windows-host integration smoke tests for the real native behaviour.
+
+These need a real Windows session and real COM/pystray, so they are skipped
+everywhere else. They cover the two things the hermetic suite cannot: a shortcut
+really round-trips through WScript.Shell, and the host lock really excludes a
+second tray process on this platform's locking primitive.
+"""
 
 from __future__ import annotations
 
 import os
 import subprocess
 import sys
-import uuid
 from pathlib import Path
 
 import pytest
 
-import process
-import registry
-import windows_support
-from registry import AppEntry
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import host
+import paths
+import windows_support
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows host required")
 
 
-def _entry(tmp_path: Path, command: str) -> AppEntry:
-    return AppEntry(
-        id="windows-smoke",
-        name="Windows Smoke",
-        cwd=str(tmp_path),
-        command=command,
-        port=8765,
-        github_url="https://github.com/example/windows-smoke",
-    )
-
-
-def test_real_start_menu_shortcut_round_trip(tmp_path, monkeypatch):
+def test_real_startup_shortcut_round_trip(tmp_path, monkeypatch):
     """Create and inspect a real WScript.Shell shortcut without touching the profile."""
     import win32com.client
 
     monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
-    monkeypatch.setattr(registry, "APPISTRY_DIR", tmp_path / ".appistry")
+    monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path / ".appistry")
     appistry_dir = tmp_path / "Appistry Home"
     appistry_dir.mkdir()
-    entry = _entry(tmp_path, "unused.exe")
 
-    shortcut_path = windows_support.build_registered_shortcut(entry, appistry_dir)
+    startup, menu = windows_support.install_appistry_shortcuts(appistry_dir)
 
-    assert shortcut_path.is_file()
-    shortcut = win32com.client.Dispatch("WScript.Shell").CreateShortcut(
-        str(shortcut_path)
-    )
+    assert startup.is_file()
+    assert menu.is_file()
+    shortcut = win32com.client.Dispatch("WScript.Shell").CreateShortcut(str(startup))
     expected_target = appistry_dir / ".venv" / "Scripts" / "pythonw.exe"
     assert os.path.normcase(os.path.abspath(shortcut.TargetPath)) == os.path.normcase(
         os.path.abspath(expected_target)
     )
-    assert "appistry.py" in shortcut.Arguments
-    assert shortcut.Arguments.endswith("launch windows-smoke")
+    assert "windows_tray.py" in shortcut.Arguments
 
 
-def test_named_mutex_enforces_single_windows_tray_instance():
-    name = rf"Local\AppistryWindowsSmoke-{uuid.uuid4()}"
-    first = windows_support.NamedMutex(name)
-    second = windows_support.NamedMutex(name)
-    after_release = windows_support.NamedMutex(name)
-
+def test_the_host_lock_excludes_a_second_tray(tmp_path):
+    """One process draws the menu; the second must be refused, not crash."""
+    path = tmp_path / "menubar.lock"
+    first, second = host.HostLock(path), host.HostLock(path)
     try:
         assert first.acquire() is True
         assert second.acquire() is False
+        assert second.failure == host.CONTENDED
         first.release()
-        assert after_release.acquire() is True
+        assert second.acquire() is True
     finally:
         first.release()
         second.release()
-        after_release.release()
 
 
-def test_userprofile_redirects_path_home_in_real_windows_child(tmp_path):
+def test_the_host_lock_is_released_when_the_holder_exits(tmp_path):
+    """The OS drops the lock on process death, so there is no stale-lock case."""
+    path = tmp_path / "menubar.lock"
+    script = (
+        f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r})\n"
+        "import host\n"
+        f"lock = host.HostLock({str(path)!r})\n"
+        "assert lock.acquire() is True\n"
+    )
+    subprocess.run([sys.executable, "-c", script], check=True, capture_output=True)
+
+    lock = host.HostLock(path)
+    try:
+        assert lock.acquire() is True
+    finally:
+        lock.release()
+
+
+def test_the_real_tray_image_decodes(tmp_path, monkeypatch):
+    """pystray needs a decoded bitmap; the checked-in colour PNG must load."""
+    monkeypatch.setattr(paths, "APPISTRY_DIR", tmp_path / ".appistry")
+    import windows_tray
+
+    image = windows_tray._tray_image()
+
+    assert image.mode == "RGBA"
+    assert image.width > 0 and image.height > 0
+
+
+def test_userprofile_redirects_path_home_in_a_real_child(tmp_path):
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
     env["USERPROFILE"] = str(tmp_path)
@@ -80,30 +98,17 @@ def test_userprofile_redirects_path_home_in_real_windows_child(tmp_path):
 
     result = subprocess.run(
         [sys.executable, "-c", "from pathlib import Path; print(Path.home())"],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
+        check=True, capture_output=True, text=True, env=env,
     )
 
     assert Path(result.stdout.strip()).resolve() == tmp_path.resolve()
 
 
-def test_real_windows_process_lifecycle(tmp_path, monkeypatch):
-    sleeper = tmp_path / "sleeper.py"
-    sleeper.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
-    command = subprocess.list2cmdline([sys.executable, str(sleeper)])
-    entry = _entry(tmp_path, command)
-    state_dir = tmp_path / ".appistry"
-    monkeypatch.setattr(process, "APPISTRY_DIR", state_dir)
-    monkeypatch.setattr(process, "PIDS_DIR", state_dir / "pids")
-    monkeypatch.setattr(process, "SECRETS_DIR", state_dir / "secrets")
+def test_a_windows_descriptor_directory_resolves_under_localappdata(tmp_path, monkeypatch):
+    """The path rule is the contract both ravens follow, so pin it on the real OS."""
+    import ravens
 
-    try:
-        assert process.start(entry) is True
-        assert process.is_running(entry.id) is True
-        assert process.stop(entry.id) is True
-        assert process.is_running(entry.id) is False
-    finally:
-        if process.is_running(entry.id):
-            process.stop(entry.id)
+    monkeypatch.delenv("RAVENS_STATE_DIR", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
+
+    assert ravens.state_dir() == tmp_path / "AppData" / "Local" / "Ravens"

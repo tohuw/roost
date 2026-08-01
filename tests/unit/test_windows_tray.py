@@ -1,15 +1,27 @@
-"""Hermetic behavior tests for the Windows tray menu and actions."""
+"""Tests for the Windows tray's rendering of the shared rows.
 
+The point of these tests is parity: the Windows tray and the macOS tray consume
+the same rows from :mod:`tray`, so the menu must not differ between platforms
+except in how a row is drawn. The last test in this file asserts that directly by
+building both menus from one model and comparing the labels.
+"""
+
+import sys
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import menubar
-import process
-import registry
-import windows_support
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import host
+import icons
+import menu_spec
+import ravens
+import tray
 import windows_tray
-from registry import AppEntry
+from tray import RowKind
 
 
 class _FakeMenu:
@@ -20,10 +32,12 @@ class _FakeMenu:
 
 
 class _FakeMenuItem:
-    def __init__(self, text, action=None, *, enabled=True):
+    def __init__(self, text, action=None, *, enabled=True, checked=None, radio=False):
         self.text = text
         self.action = action
         self.enabled = enabled
+        self.checked = checked
+        self.radio = radio
 
 
 class _FakePystray:
@@ -31,243 +45,297 @@ class _FakePystray:
     MenuItem = _FakeMenuItem
 
 
-def _entry(**overrides):
-    values = {
-        "id": "widget",
-        "name": "Widget",
-        "cwd": r"C:\Users\alice\widget",
-        "command": r".venv\Scripts\python.exe ui\server.py",
-        "port": 8009,
-        "github_url": "https://github.com/example/widget",
-    }
-    values.update(overrides)
-    return AppEntry(**values)
+@pytest.fixture(autouse=True)
+def isolated_state(monkeypatch, tmp_path):
+    monkeypatch.setattr(icons.paths, "APPISTRY_DIR", tmp_path)
+    monkeypatch.setattr(windows_tray.paths, "APPISTRY_DIR", tmp_path)
+    return tmp_path
 
 
-def _tray_without_native_dependencies():
-    tray = windows_tray.AppistryWindowsTray.__new__(
+def _descriptor(name="huginn", port=47100):
+    return ravens.RavenDescriptor(
+        name=name, display=name.title(), api_version=1, min_api=1, max_api=1,
+        pid=1, port=port, token_path=None, token_header="", endpoints={},
+        host_priority=0, started=None, path=Path(f"/tmp/{name}.json"),
+    )
+
+
+def _live_menu(name="huginn", *labels, badge=0):
+    items = tuple(
+        menu_spec.MenuItem(label=label, action_id=f"act:{label}") for label in labels
+    )
+    return menu_spec.RavenMenu(
+        name=name, display=name.title(),
+        spec=menu_spec.MenuSpec(badge=badge, sections=(
+            menu_spec.MenuSection(id="s", title="Sessions", items=items),
+        )),
+        descriptor=_descriptor(name),
+    )
+
+
+def _tray(model=None):
+    """Build the tray without pystray, PIL, or a real Windows session."""
+    instance = windows_tray.AppistryWindowsTray.__new__(
         windows_tray.AppistryWindowsTray
     )
-    tray._pystray = _FakePystray
-    tray._menu_signature = None
-    return tray
+    instance._pystray = _FakePystray
+    instance._signature = None
+    instance._model = model if model is not None else host.MenuModel()
+    instance._state_lock = threading.RLock()
+    instance._stop_event = threading.Event()
+    return instance
 
 
-def test_windows_menu_exposes_full_running_app_and_global_actions(monkeypatch):
-    app = _entry()
-    yggdrasil = _entry(
-        id="yggdrasil",
-        name="Yggdrasil",
-        github_url="https://github.com/example/yggdrasil",
-    )
-    about_path = Path(app.cwd) / ".yggdrasil" / "about.md"
-    signature = ((app.id, True), (yggdrasil.id, False))
-    monkeypatch.setattr(
-        menubar,
-        "_menu_state",
-        lambda: (
-            [(app, True, about_path), (yggdrasil, False, None)],
-            signature,
-        ),
-    )
-    tray = _tray_without_native_dependencies()
-
-    menu = tray._build_menu()
-
-    labels = [
-        item.text
-        for item in menu.items
-        if item is not _FakeMenu.SEPARATOR
-    ]
-    assert labels == [
-        "Running apps",
-        "Search running apps...",
-        "Widget",
-        "Browse Apps",
-        "Help",
-        "Quit All",
-        "Quit Appistry",
-    ]
-    app_item = next(item for item in menu.items if getattr(item, "text", "") == "Widget")
-    assert [item.text for item in app_item.action.items if item is not _FakeMenu.SEPARATOR] == [
-        "Open",
-        "Stop",
-        "Restart",
-        "About",
-        "GitHub",
-    ]
-    assert tray._menu_signature == signature
+def _texts(menu):
+    return [item.text for item in menu.items if item is not _FakeMenu.SEPARATOR]
 
 
-def test_windows_menu_shows_empty_running_state_without_search(monkeypatch):
-    monkeypatch.setattr(menubar, "_menu_state", lambda: ([], ()))
-    tray = _tray_without_native_dependencies()
+# ── Rendering ─────────────────────────────────────────────────────────────────
 
-    menu = tray._build_menu()
+class TestRendering:
+    def test_a_separator_row_renders_as_the_pystray_separator(self):
+        assert _tray()._render(tray.Row(RowKind.SEPARATOR)) is _FakeMenu.SEPARATOR
 
-    labels = [
-        item.text
-        for item in menu.items
-        if item is not _FakeMenu.SEPARATOR
-    ]
-    assert labels == [
-        "No apps are running",
-        "Help",
-        "Quit All",
-        "Quit Appistry",
-    ]
+    def test_an_enabled_item_is_clickable(self):
+        row = tray.Row(RowKind.ITEM, label="Approve", raven="huginn", enabled=True,
+                       item=menu_spec.MenuItem(label="Approve", action_id="a"))
+        assert _tray()._render(row).action is not None
 
+    def test_a_disabled_item_is_shown_but_inert(self):
+        row = tray.Row(RowKind.ITEM, label="Approve", enabled=False,
+                       item=menu_spec.MenuItem(label="Approve"))
+        item = _tray()._render(row)
+        assert item.enabled is False
+        assert item.action is None
+        assert item.text == "Approve"
 
-def test_windows_restart_opens_readiness_page_and_restarts_app(monkeypatch):
-    monkeypatch.setenv("YGG_LAUNCH_MODE", "browser")
-    app = _entry()
-    events = []
-    monkeypatch.setattr(
-        menubar,
-        "_open_launch_page",
-        lambda app_id: events.append(("open", app_id)),
-    )
-    monkeypatch.setattr(
-        process,
-        "stop",
-        lambda app_id: events.append(("stop", app_id)) or True,
-    )
-    monkeypatch.setattr(
-        process,
-        "start",
-        lambda entry: events.append(("start", entry.id)) or True,
-    )
-    tray = _tray_without_native_dependencies()
-    tray._refresh_menu = lambda: events.append(("refresh", app.id))
+    @pytest.mark.parametrize("kind", [RowKind.RAVEN, RowKind.REASON, RowKind.SECTION])
+    def test_structural_rows_are_shown_and_inert(self, kind):
+        item = _tray()._render(tray.Row(kind, label="Text"))
+        assert item.enabled is False
+        assert item.text == "Text"
 
-    tray._restart_app(app)
+    def test_the_submenu_marks_the_active_icon(self):
+        row = tray.Row(RowKind.HOST, label="Tray icon", action="icon", enabled=True,
+                       children=(
+                           tray.Row(RowKind.HOST, label="Raven", action="icon:raven",
+                                    enabled=True, checked=True),
+                           tray.Row(RowKind.HOST, label="Appistry",
+                                    action="icon:appistry", enabled=True),
+                       ))
+        item = _tray()._render(row)
+        children = item.action.items
+        assert [child.text for child in children] == ["Raven", "Appistry"]
+        assert [child.checked(child) for child in children] == [True, False]
 
-    assert events == [
-        ("open", "widget"),
-        ("stop", "widget"),
-        ("start", "widget"),
-        ("refresh", "widget"),
-    ]
+    def test_the_whole_menu_is_built_from_the_shared_rows(self, monkeypatch):
+        model = host.MenuModel((_live_menu("huginn", "Approve"),))
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
+        menu = _tray()._build_menu()
+        texts = _texts(menu)
+        assert "Huginn" in texts
+        assert "Approve" in texts
+        assert tray.HELP_LABEL in texts
+        assert tray.QUIT_LABEL in texts
 
+    def test_an_unavailable_raven_renders_with_its_reason(self, monkeypatch):
+        model = host.MenuModel((
+            menu_spec.RavenMenu(name="muninn", display="Muninn",
+                                reason="Is not answering."),
+        ))
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
+        texts = _texts(_tray()._build_menu())
+        assert "Muninn" in texts
+        assert "Is not answering." in texts
 
-def test_windows_browse_starts_stopped_yggdrasil(monkeypatch):
-    yggdrasil = _entry(id="yggdrasil", name="Yggdrasil")
-    events = []
-    monkeypatch.setattr(
-        menubar,
-        "_open_launch_page",
-        lambda app_id: events.append(("open", app_id)),
-    )
-    monkeypatch.setattr(process, "is_running", lambda _app_id: False)
-    monkeypatch.setattr(
-        process,
-        "start",
-        lambda entry: events.append(("start", entry.id)) or True,
-    )
-    tray = _tray_without_native_dependencies()
-    tray._refresh_menu = lambda: events.append(("refresh", yggdrasil.id))
-
-    tray._browse_apps(yggdrasil)
-
-    assert events == [
-        ("open", "yggdrasil"),
-        ("start", "yggdrasil"),
-        ("refresh", "yggdrasil"),
-    ]
+    def test_no_ravens_at_all_says_so(self, monkeypatch):
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: host.MenuModel())
+        assert tray.NO_RAVENS_LABEL in _texts(_tray()._build_menu())
 
 
-def test_windows_tray_waits_for_grace_period_before_removed_shortcut_cleanup(
-    tmp_path, monkeypatch
-):
-    app = _entry()
-    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
-    monkeypatch.setattr(registry, "load", lambda: [app])
-    monkeypatch.setattr(
-        windows_tray.time,
-        "monotonic",
-        MagicMock(side_effect=[100, 116]),
-    )
-    tray = _tray_without_native_dependencies()
-    tray._known_shortcuts = {app.id}
-    tray._shortcut_missing_since = {}
-    handled = []
-    tray._handle_removed = handled.append
+# ── Activation ────────────────────────────────────────────────────────────────
 
-    tray._check_removed_shortcuts()
-    assert handled == []
+class TestActivation:
+    def test_a_click_is_forwarded_to_the_publishing_raven(self, monkeypatch):
+        model = host.MenuModel((_live_menu("huginn", "Approve"),))
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
+        seen = []
+        monkeypatch.setattr(
+            host, "activate",
+            lambda menu, item: seen.append((menu.name, item.action_id)) or None,
+        )
+        instance = _tray(model)
+        instance._refresh = lambda *_a: None
+        instance._activate(tray.Row(
+            RowKind.ITEM, label="Approve", raven="huginn", enabled=True,
+            item=model.menus[0].spec.sections[0].items[0],
+        ))
+        assert seen == [("huginn", "act:Approve")]
 
-    tray._check_removed_shortcuts()
-    assert handled == [app]
+    def test_a_url_result_is_opened(self, monkeypatch):
+        model = host.MenuModel((_live_menu("huginn", "Console"),))
+        monkeypatch.setattr(host, "activate", lambda *_a: "http://127.0.0.1:47100/")
+        opened = []
+        monkeypatch.setattr(windows_tray.webbrowser, "open", opened.append)
+        instance = _tray(model)
+        instance._refresh = lambda *_a: None
+        instance._activate(tray.Row(
+            RowKind.ITEM, label="Console", raven="huginn", enabled=True,
+            item=model.menus[0].spec.sections[0].items[0],
+        ))
+        assert opened == ["http://127.0.0.1:47100/"]
+
+    def test_a_click_on_a_vanished_raven_does_nothing(self, monkeypatch):
+        monkeypatch.setattr(
+            host, "activate",
+            lambda *_a: pytest.fail("activate must not run for a missing raven"),
+        )
+        instance = _tray(host.MenuModel())
+        instance._refresh = lambda *_a: None
+        instance._activate(tray.Row(
+            RowKind.ITEM, label="Gone", raven="huginn", enabled=True,
+            item=menu_spec.MenuItem(label="Gone", action_id="a"),
+        ))
+
+    def test_help_opens_the_local_help_page(self, monkeypatch):
+        opened = []
+        monkeypatch.setattr(windows_tray.help_server, "url",
+                            lambda: "http://127.0.0.1:1/")
+        monkeypatch.setattr(windows_tray.webbrowser, "open", opened.append)
+        _tray()._host_action("help")
+        assert opened == ["http://127.0.0.1:1/"]
+
+    def test_choosing_an_icon_persists_it(self, monkeypatch):
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: host.MenuModel())
+        monkeypatch.setattr(windows_tray, "_tray_image", lambda: object())
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._host_action(f"icon:{icons.DEFAULT_ICON}")
+        assert icons.configured_icon() == icons.DEFAULT_ICON
+
+    def test_an_unloadable_icon_does_not_break_the_tray(self, monkeypatch):
+        """A bad image must not take the menu down; the old bitmap stays."""
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: host.MenuModel())
+        monkeypatch.setattr(
+            windows_tray, "_tray_image",
+            lambda: (_ for _ in ()).throw(OSError("cannot identify image")),
+        )
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._host_action(f"icon:{icons.DEFAULT_ICON}")  # must not raise
 
 
-def test_windows_removed_shortcut_stops_cleans_and_unregisters_app(
-    tmp_path, monkeypatch
-):
-    app = _entry(cwd=str(tmp_path))
-    events = []
-    monkeypatch.setattr(process, "is_running", lambda _app_id: True)
-    monkeypatch.setattr(
-        process,
-        "stop",
-        lambda app_id: events.append(("stop", app_id)) or True,
-    )
-    monkeypatch.setattr(
-        windows_tray.cleanup,
-        "git_clean_project",
-        lambda cwd: events.append(("clean", cwd)) or True,
-    )
-    monkeypatch.setattr(
-        windows_support,
-        "remove_registered_shortcut",
-        lambda entry: events.append(("shortcut", entry.id)),
-    )
-    monkeypatch.setattr(
-        registry,
-        "remove",
-        lambda app_id: events.append(("registry", app_id)),
-    )
-    tray = _tray_without_native_dependencies()
-    tray._known_shortcuts = {app.id}
-    tray._shortcut_missing_since = {app.id: 1.0}
-    tray._icon = MagicMock()
+# ── Lifecycle ─────────────────────────────────────────────────────────────────
 
-    tray._handle_removed(app)
+class TestLifecycle:
+    def test_quit_stops_the_help_server_and_removes_the_pid_file(self, tmp_path):
+        windows_tray.windows_support.tray_pid_path().write_text("1234", encoding="utf-8")
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._shutdown()
+        assert windows_tray.windows_support.tray_pid_path().exists() is False
+        assert instance._stop_event.is_set() is True
+        instance._icon.stop.assert_called_once_with()
 
-    assert events == [
-        ("stop", "widget"),
-        ("clean", tmp_path),
-        ("shortcut", "widget"),
-        ("registry", "widget"),
-    ]
-    tray._icon.notify.assert_called_once()
+    def test_quit_stops_no_raven(self):
+        """There is no Quit All: the ravens are daemons the tray does not own.
+
+        The tray spawns nothing and signals nothing. It does *install* SIGTERM
+        and SIGINT handlers so it can close its own window cleanly, which is the
+        opposite concern — receiving a signal, not sending one.
+        """
+        source = Path(windows_tray.__file__).read_text(encoding="utf-8")
+        for forbidden in ("Popen", "os.kill", "proc.terminate", "process.stop",
+                          "signal.raise_signal", "psutil"):
+            assert forbidden not in source, forbidden
+
+    def test_shutdown_is_idempotent(self, tmp_path):
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._shutdown()
+        instance._shutdown()
+        instance._icon.stop.assert_called_once_with()
+
+    def test_a_failing_poll_does_not_kill_the_thread(self, monkeypatch):
+        """If the poll thread dies the menu silently freezes at its last contents."""
+        monkeypatch.setattr(windows_tray.windows_support,
+                            "refresh_user_environment", lambda: None)
+        monkeypatch.setattr(
+            host, "build_model",
+            lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        instance = _tray()
+        instance._stop_event = threading.Event()
+
+        # One iteration, then stop.
+        waits = [False, True]
+        monkeypatch.setattr(instance._stop_event, "wait", lambda _t: waits.pop(0))
+        instance._poll()  # must not raise
+        assert waits == []
+
+    def test_an_unchanged_model_does_not_refresh(self, monkeypatch):
+        model = host.MenuModel((_live_menu("huginn", "Approve"),))
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
+        monkeypatch.setattr(windows_tray.windows_support,
+                            "refresh_user_environment", lambda: None)
+        instance = _tray()
+        instance._build_menu()
+        refreshes = []
+        instance._refresh = lambda *_a: refreshes.append(1)
+        waits = [False, True]
+        monkeypatch.setattr(instance._stop_event, "wait", lambda _t: waits.pop(0))
+        instance._poll()
+        assert refreshes == []
 
 
-def test_windows_quit_all_stops_apps_and_local_services(tmp_path, monkeypatch):
-    running = _entry(id="running", name="Running")
-    stopped = _entry(id="stopped", name="Stopped")
-    monkeypatch.setattr(registry, "APPISTRY_DIR", tmp_path)
-    monkeypatch.setattr(registry, "load", lambda: [running, stopped])
-    monkeypatch.setattr(process, "is_running", lambda app_id: app_id == "running")
-    stopped_ids = []
-    monkeypatch.setattr(
-        process,
-        "stop",
-        lambda app_id: stopped_ids.append(app_id) or True,
-    )
-    hook_shutdown = MagicMock()
-    help_shutdown = MagicMock()
-    monkeypatch.setattr(menubar, "_hook_server_shutdown", hook_shutdown)
-    monkeypatch.setattr(menubar, "_help_server_shutdown", help_shutdown)
-    windows_support.tray_pid_path().write_text("1234", encoding="utf-8")
-    tray = _tray_without_native_dependencies()
-    tray._stop_event = threading.Event()
-    tray._icon = MagicMock()
+# ── There is no launcher left ────────────────────────────────────────────────
 
-    tray._shutdown(stop_apps=True)
+class TestNoLauncherRemains:
+    def test_the_module_imports_no_launcher_module(self):
+        source = Path(windows_tray.__file__).read_text(encoding="utf-8")
+        for forbidden in ("import process", "import registry", "import launch",
+                          "import cleanup", "import menubar"):
+            assert forbidden not in source, forbidden
 
-    assert stopped_ids == ["running"]
-    assert windows_support.tray_pid_path().exists() is False
-    assert tray._stop_event.is_set() is True
-    hook_shutdown.assert_called_once_with()
-    help_shutdown.assert_called_once_with()
-    tray._icon.stop.assert_called_once_with()
+    def test_no_raven_id_is_special_cased(self):
+        source = Path(windows_tray.__file__).read_text(encoding="utf-8")
+        for name in ("huginn", "muninn", "Huginn", "Muninn"):
+            assert name not in source, name
+
+
+# ── It draws exactly the shared rows ─────────────────────────────────────────
+
+class TestItDrawsTheSharedRows:
+    """The rendered menu must be the shared rows and nothing else.
+
+    The previous design let each tray assemble its own structure from raw state,
+    and they drifted until each had separately hardcoded a special case for one
+    participant's id. Pinning the rendered labels against ``tray.build_rows`` is
+    what makes that drift impossible: the tray cannot add, drop, or reorder a row
+    without failing here. ``tests/unit/test_tray_parity.py`` then checks the macOS
+    tray against the same rows.
+    """
+
+    def test_the_rendered_labels_are_exactly_the_row_labels(self, monkeypatch):
+        model = host.MenuModel((
+            _live_menu("huginn", "Approve", badge=2),
+            menu_spec.RavenMenu(name="muninn", display="Muninn", reason="Gone."),
+        ))
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
+
+        rows = tray.build_rows(model)
+        expected = [row.label for row in rows if row.kind is not RowKind.SEPARATOR]
+
+        assert _texts(_tray()._build_menu()) == expected
+
+    def test_the_separators_land_in_the_same_places(self, monkeypatch):
+        model = host.MenuModel((_live_menu("huginn", "A"), _live_menu("muninn", "B")))
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
+
+        rows = tray.build_rows(model)
+        expected = [row.kind is RowKind.SEPARATOR for row in rows]
+        actual = [
+            item is _FakeMenu.SEPARATOR for item in _tray()._build_menu().items
+        ]
+
+        assert actual == expected

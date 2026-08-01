@@ -28,11 +28,22 @@ before disclosing publicly.
 Appistry runs entirely on the local machine and binds only to `127.0.0.1`. Of
 particular interest are:
 
-- Anything that lets a web page, another local process, or a registered app's
-  metadata escape the loopback boundary or gain code execution
-- Path traversal or command injection through registry-controlled values
-  (app `id`, `name`, `cwd`, `command`, `icon`, `github_url`)
-- Leakage of per-launch secrets, or of OAuth credentials transiting the stable
-  hook proxy
-- Weaknesses in the app-bundle removal / project-cleanup path that could
-  destroy user data
+- Anything that lets a web page or another local process escape the loopback
+  boundary, or that lets Appistry be used as a conduit into a raven. A fixed
+  loopback port is reachable by any page the user has open, so the help server
+  refuses a foreign `Host` and **any** `Origin`, and forwards nothing.
+- **Credential mixing between ravens.** Each raven owns its own token. Anything
+  that could send one raven's credential to another raven's port, cache a token
+  across ravens, or make Appistry mint a credential on a raven's behalf.
+- **Descriptor handling.** A descriptor is a file written by another process and
+  is treated as untrusted input. Anything that lets a descriptor field reach a
+  menu, a log, a terminal, or a filesystem path unvalidated — including control
+  characters, ANSI escapes, bidirectional overrides, path traversal through a
+  raven name or `token_path`, or a value that redirects a request off the port
+  the descriptor declared.
+- **Unbounded work from a raven.** A raven is a separate process that can hang or
+  misbehave. Anything that lets it block the menu-build path, return an
+  unbounded response, or turn a malformed reply into a crash rather than a
+  disabled section with a reason.
+- Anything that reads or writes Appistry's own state (`~/.appistry`) with
+  permissions that let another local user see or alter it.
