@@ -11,6 +11,7 @@ import http.server
 import json
 import os
 import socketserver
+import stat
 import sys
 import threading
 import time
@@ -27,6 +28,10 @@ import ravens
 import sanitize
 
 _POLL_INTERVAL = 0.01
+
+_POSIX_ONLY = pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX mode bits are not meaningful on Windows"
+)
 
 
 class _Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -186,6 +191,130 @@ class TestHostLock:
     def test_lock_path_lives_under_the_appistry_dir(self, monkeypatch, tmp_path):
         monkeypatch.setattr(host.paths, "APPISTRY_DIR", tmp_path)
         assert host.host_lock_path() == tmp_path / host.HOST_LOCK_NAME
+
+    def test_lock_path_is_not_inside_the_install_tree(self, monkeypatch, tmp_path):
+        """The lock must not live beside the code.
+
+        A lock file in the install directory cannot be created from a read-only
+        or shared install, and a mode that lets other local users read it
+        publishes the host's PID.
+        """
+        monkeypatch.setattr(host.paths, "APPISTRY_DIR", tmp_path)
+        repo = Path(host.__file__).resolve().parent
+        assert repo not in host.host_lock_path().resolve().parents
+
+
+@_POSIX_ONLY
+class TestHostLockPermissions:
+    def test_the_lock_file_is_owner_only(self, tmp_path):
+        path = tmp_path / "menubar.lock"
+        lock = host.HostLock(path)
+        try:
+            assert lock.acquire() is True
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        finally:
+            lock.release()
+
+    def test_a_preexisting_world_readable_lock_is_re_restricted(self, tmp_path):
+        """An older build created this file 0644; reopening keeps the old mode."""
+        path = tmp_path / "menubar.lock"
+        path.write_text("1", encoding="utf-8")
+        path.chmod(0o644)
+        lock = host.HostLock(path)
+        try:
+            assert lock.acquire() is True
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        finally:
+            lock.release()
+
+    def test_the_lock_mode_is_not_left_to_umask(self, tmp_path):
+        previous = os.umask(0o000)
+        try:
+            path = tmp_path / "menubar.lock"
+            lock = host.HostLock(path)
+            try:
+                assert lock.acquire() is True
+                assert stat.S_IMODE(path.stat().st_mode) == 0o600
+            finally:
+                lock.release()
+        finally:
+            os.umask(previous)
+
+
+@_POSIX_ONLY
+class TestHostLockOnAnUnwritablePath:
+    """An unusable lock path must be reportable, never an exception.
+
+    The tray acquires the lock before it has a UI to show an error in, so an
+    uncaught PermissionError here is a silent failure to launch.
+    """
+
+    def test_an_uncreatable_state_directory_does_not_raise(self, tmp_path):
+        """The state directory cannot be created because a file is in its place."""
+        blocker = tmp_path / "state"
+        blocker.write_text("not a directory", encoding="utf-8")
+
+        lock = host.HostLock(blocker / "menubar.lock")
+
+        assert lock.acquire() is False
+        assert lock.failure == host.UNWRITABLE
+        assert lock.reason
+        assert lock.held is False
+
+    def test_an_unopenable_lock_path_does_not_raise(self, tmp_path):
+        """The lock path exists but cannot be opened for writing."""
+        occupied = tmp_path / "menubar.lock"
+        occupied.mkdir()  # os.open(dir, O_RDWR) raises IsADirectoryError
+
+        lock = host.HostLock(occupied)
+
+        assert lock.acquire() is False
+        assert lock.failure == host.UNWRITABLE
+        assert lock.reason
+        assert lock.held is False
+
+    def test_a_read_only_install_directory_is_never_the_lock_location(
+        self, monkeypatch, tmp_path
+    ):
+        """Regression: the lock used to live in the repo, so a read-only install
+        made it uncreatable and the tray died before drawing anything."""
+        install = tmp_path / "install"
+        install.mkdir()
+        install.chmod(0o500)
+        state = tmp_path / "state"
+        monkeypatch.setattr(host.paths, "APPISTRY_DIR", state)
+        try:
+            lock = host.HostLock()
+            try:
+                assert lock.acquire() is True
+                assert install not in lock.path.parents
+            finally:
+                lock.release()
+        finally:
+            install.chmod(0o700)
+
+    def test_contention_is_distinguished_from_unwritability(self, tmp_path):
+        path = tmp_path / "menubar.lock"
+        first, second = host.HostLock(path), host.HostLock(path)
+        try:
+            assert first.acquire() is True
+            assert second.acquire() is False
+            assert second.failure == host.CONTENDED
+        finally:
+            first.release()
+            second.release()
+
+    def test_a_failed_acquire_clears_a_previous_reason(self, tmp_path):
+        path = tmp_path / "menubar.lock"
+        lock = host.HostLock(path)
+        lock.failure = host.UNWRITABLE
+        lock.reason = "stale"
+        try:
+            assert lock.acquire() is True
+            assert lock.failure == ""
+            assert lock.reason == ""
+        finally:
+            lock.release()
 
 
 # ── Aggregation ───────────────────────────────────────────────────────────────

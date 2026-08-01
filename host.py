@@ -45,6 +45,15 @@ def host_lock_path() -> Path:
     return paths.APPISTRY_DIR / HOST_LOCK_NAME
 
 
+#: Set on a failed :meth:`HostLock.acquire` when the lock file itself could not
+#: be created or opened, as opposed to another process legitimately holding it.
+#: The two cases need different handling: the second is the normal outcome for a
+#: duplicate launch and should exit quietly, while the first means this machine
+#: cannot host at all and the user has to be told why.
+UNWRITABLE = "unwritable"
+CONTENDED = "contended"
+
+
 class HostLock:
     """An exclusive, process-lifetime lock electing this process as the host.
 
@@ -52,33 +61,75 @@ class HostLock:
     this is ``flock``, which the kernel drops on process death — so unlike a PID
     file there is no stale-lock case to reason about. On Windows the same
     guarantee comes from an exclusive open of the file.
+
+    The lock lives under Appistry's own state directory at mode 0600, not beside
+    the code. A lock file inside the install tree is wrong twice over: a
+    read-only or shared install directory makes it uncreatable (which used to
+    take the whole tray down with an uncaught ``PermissionError``), and a
+    world-readable mode publishes the host's PID to every local user. Both the
+    directory creation and the open are guarded here, so an unusable lock path
+    reports :data:`UNWRITABLE` and the caller decides — it never raises into a
+    tray startup path.
     """
 
     def __init__(self, path: Path | None = None):
         self.path = path or host_lock_path()
         self._handle = None
+        #: Why the last :meth:`acquire` failed — ``UNWRITABLE`` or ``CONTENDED``.
+        self.failure = ""
+        #: A human-readable form of :attr:`failure`, safe to log or show.
+        self.reason = ""
 
     @property
     def held(self) -> bool:
         return self._handle is not None
 
+    def _fail(self, failure: str, reason: str) -> bool:
+        self.failure = failure
+        self.reason = reason
+        return False
+
     def acquire(self) -> bool:
-        """Return True if this process is now the host, False if another already is."""
+        """Return True if this process is now the host.
+
+        Returns False both when another process already holds the lock and when
+        the lock file cannot be created; :attr:`failure` distinguishes them.
+        """
         if self._handle is not None:
             return True
-        paths.secure_dir(self.path.parent)
+        self.failure = ""
+        self.reason = ""
+        try:
+            paths.secure_dir(self.path.parent)
+        except OSError as exc:
+            return self._fail(
+                UNWRITABLE,
+                f"The state directory {self.path.parent} is not writable "
+                f"({exc.__class__.__name__}).",
+            )
         if _IS_WINDOWS:
             return self._acquire_windows()
         return self._acquire_posix()
 
     def _acquire_posix(self) -> bool:
-        raw_fd = os.open(str(self.path), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            raw_fd = os.open(str(self.path), os.O_CREAT | os.O_RDWR, 0o600)
+        except OSError as exc:
+            # A read-only or otherwise unusable state directory must not crash
+            # the tray on startup; it has to be reportable.
+            return self._fail(
+                UNWRITABLE,
+                f"The host lock at {self.path} could not be opened "
+                f"({exc.__class__.__name__}).",
+            )
         handle = os.fdopen(raw_fd, "r+")
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (BlockingIOError, OSError):
             handle.close()
-            return False
+            return self._fail(
+                CONTENDED, "Another Appistry process is already hosting the menu."
+            )
         self._handle = handle
         self._record_pid()
         return True
@@ -88,14 +139,20 @@ class HostLock:
 
         try:
             handle = open(self.path, "a+", encoding="utf-8")
-        except OSError:
-            return False
+        except OSError as exc:
+            return self._fail(
+                UNWRITABLE,
+                f"The host lock at {self.path} could not be opened "
+                f"({exc.__class__.__name__}).",
+            )
         try:
             handle.seek(0)
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
             handle.close()
-            return False
+            return self._fail(
+                CONTENDED, "Another Appistry process is already hosting the menu."
+            )
         self._handle = handle
         self._record_pid()
         return True
@@ -106,6 +163,10 @@ class HostLock:
         The lock itself is what enforces exclusivity; this is only so a user
         looking at the file can tell which process is hosting.
         """
+        # A lock file left behind by an older build (which created it 0644 inside
+        # the repo) keeps its mode when reopened, so re-restrict it every time
+        # rather than trusting the mode the ``os.open`` above asked for.
+        paths.restrict_to_owner(self.path)
         try:
             self._handle.seek(0)
             self._handle.truncate()
