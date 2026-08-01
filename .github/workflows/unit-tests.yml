@@ -38,9 +38,9 @@ jobs:
       - name: Smoke-test console entry point
         run: appistry --help
 
-      - name: Import Windows runtime
+      - name: Import the Windows tray
         if: runner.os == 'Windows'
-        run: python -c "import menubar, process, windows_support, windows_tray"
+        run: python -c "import windows_support, windows_tray"
 
       - name: Exercise native Windows runtime
         if: runner.os == 'Windows'

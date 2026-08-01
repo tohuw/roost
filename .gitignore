@@ -5,12 +5,11 @@ __pycache__/
 build/
 dist/
 ~/.appistry/
-Appistry.app/
 .DS_Store
+# The host lock lives under ~/.appistry, not here — this only catches one left
+# behind by an older build that kept it in the working tree.
 *.lock
-.menubar.lock
 .pytest_cache/
 .ruff_cache/
 .agents/
 .claude/
-.yggdrasil/
