@@ -25,7 +25,12 @@ from roost import help_server
 from roost import paths
 
 _STARTUP_SHORTCUT = "Roost.lnk"
-_TRAY_PID_FILE = "windows-tray.pid"
+
+#: The tray's PID file. Prefixed, like every other file this project writes: the
+#: separate internal Appistry writes a ``windows-tray.pid`` of its own, and while
+#: the two state directories are disjoint, reusing the basename is the thing that
+#: would turn any future directory sharing into one tray reading the other's PID.
+_TRAY_PID_FILE = "roost-windows-tray.pid"
 
 #: How the tray process is launched, and therefore the token ``stop_tray`` looks
 #: for in a candidate command line.
