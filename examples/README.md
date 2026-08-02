@@ -12,6 +12,33 @@ Roost and neither is imported by the real Huginn or Muninn — each project
 implements the contract itself. These exist so the contract has an executable
 form you can read end to end and point at when something disagrees.
 
+## Both ravens are real now — read them too
+
+When these files were written they were the only implementations of the protocol
+that existed. They are not any more, and a production raven answers questions these
+cannot:
+
+| Project | Its raven side |
+|---|---|
+| [Huginn](https://github.com/tohuw/huginn) | [`huginn/raven.py`](https://github.com/tohuw/huginn/blob/master/huginn/raven.py) — descriptor, menu, and the authenticated `/api/menu` + `/api/menu/action` routes inside its existing FastAPI app (note: its default branch is `master`) |
+| [Muninn](https://github.com/tohuw/muninn) | [`muninn/raven.py`](https://github.com/tohuw/muninn/blob/main/muninn/raven.py) for the descriptor and payload, [`muninn/ravenserve.py`](https://github.com/tohuw/muninn/blob/main/muninn/ravenserve.py) for the loopback listener and its publish/withdraw lifecycle |
+
+The two shipped ravens sit at opposite ends of the contract's optional parts, which
+is more instructive than either example: Huginn authenticates and offers actions,
+Muninn publishes no `token_path` and every row is a link. Both are decisions the
+protocol leaves to the raven, and each project records *why* it chose as it did —
+which is the part an example cannot show you.
+
+They also solve two problems these files sidestep. Muninn splits the payload from
+the socket so its payload can be tested with no port bound, and both projects share
+the descriptor mechanics through [`corvidae`](https://pypi.org/project/corvidae/), a
+stdlib-only package, rather than each writing the atomic-0600-publish and
+state-directory-resolution code twice. If you are implementing a third raven,
+`corvidae` is probably what you want instead of copying from here.
+
+So: read these for the shape of the contract end to end, and read the two real ones
+for how it survives contact with a real application.
+
 Each file is standalone (stdlib only) and can be run directly:
 
 ```bash

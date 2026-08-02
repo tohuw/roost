@@ -15,6 +15,10 @@ documentation, not libraries: Roost does not import them and neither raven
 does. Read them alongside this document — where the two disagree, the code in
 `examples/` is the one that has been executed.
 
+Both ravens named above now implement this for real, and those are worth reading
+next to the examples rather than instead of them — see
+[Reference implementations](#reference-implementations) at the end.
+
 ---
 
 ## Contents
@@ -515,6 +519,8 @@ menu.
 
 ## Reference implementations
 
+### Executable, in this repository
+
 | File | Shows |
 |---|---|
 | [`examples/huginn_raven.py`](examples/huginn_raven.py) | Leading raven: higher priority, badge, token, per-item actions |
@@ -528,3 +534,24 @@ python3 examples/huginn_raven.py
 
 Start one or both and the tray will show them; `roost ravens` will explain
 anything it will not show.
+
+### Shipped, in the ravens themselves
+
+Both ravens implement this contract in production, and the two sit at opposite ends
+of its optional parts — which makes them the better answer to "how do I actually do
+this in an application that already exists":
+
+| Project | Its raven side |
+|---|---|
+| [Huginn](https://github.com/tohuw/huginn) | [`huginn/raven.py`](https://github.com/tohuw/huginn/blob/master/huginn/raven.py) — authenticated `menu` *and* `action` routes inside an existing FastAPI app, behind the same token gate as the rest of its API |
+| [Muninn](https://github.com/tohuw/muninn) | [`muninn/raven.py`](https://github.com/tohuw/muninn/blob/main/muninn/raven.py) (descriptor and payload) plus [`muninn/ravenserve.py`](https://github.com/tohuw/muninn/blob/main/muninn/ravenserve.py) (its own loopback listener) — no `token_path`, no `action` endpoint, every row a link |
+
+Neither is a dependency of Roost and Roost is not a dependency of either. The
+descriptor mechanics [§2](#2-the-descriptor) describes — the state-directory
+resolution rule, the atomic 0600 publish, the ownership-checked withdraw, the
+liveness cross-check — are shared between them through
+[`corvidae`](https://pypi.org/project/corvidae/), a stdlib-only package with no
+dependencies. **A third raven should probably use it rather than reimplement §2**;
+the resolution rule in particular fails silently when two participants disagree,
+which is the whole reason it was extracted. What a descriptor *says*, and the menu
+itself, stay per-project on purpose.

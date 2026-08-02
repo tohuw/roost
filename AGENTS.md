@@ -51,7 +51,7 @@ All paths below are relative to `roost/`.
 | `sanitize.py` | Strips escapes/controls/bidi from untrusted strings |
 | `cli.py` | CLI: `install`, `uninstall`, `ui`, `ravens`, `icon` |
 | `__init__.py` | The product name and slug; the package docstring explains why the package exists |
-| `../examples/` | Two runnable reference ravens — documentation, not libraries |
+| `../examples/` | Two runnable reference ravens — documentation, not libraries. Both real ravens are now shipped too; `examples/README.md` links them |
 
 `menubar.py` guards its macOS-only imports so it stays importable elsewhere.
 `windows_support.py` imports Windows-only packages *inside functions* for the same
@@ -141,23 +141,40 @@ either tray's rendering, that file is the one that catches the drift.
 
 - **Do not edit the huginn or muninn repositories from here.** The reference
   implementations live in `examples/` precisely so this repository can document the
-  contract without reaching into its consumers.
+  contract without reaching into its consumers. Both projects now ship a real raven
+  and `SPEC.md`/`examples/README.md` link to them — a link is the whole of the
+  allowed coupling, and a protocol change is a note to their maintainers, not a
+  commit in their tree.
+
+- **`roost/assets/roost.png` is still the launcher's four-square mark.** Known and
+  documented in `roost/assets/CREDITS.md`. It is not the default (the raven is), so
+  it only appears if a user runs `roost icon set roost`. Fixing it needs a drawing,
+  not code; do not paper over it by removing the icon from the catalog, because that
+  would break a selection someone already made.
 
 - **The raven icon is a licence obligation.** *Raven* by Lorc, game-icons.net, CC
   BY 3.0. `roost/assets/CREDITS.md` must keep crediting it for as long as the art
   is here. If the art goes, the credit goes with it; if art is added, credit it
   before shipping.
 
-- **No internal names.** This is a public repository derived from an internal one.
-  The scrub list is in the commit history; grep before committing.
+- **No internal names.** This repository is **public** and derived from an internal
+  one, so this is the one rule here whose violation cannot be taken back: a pushed
+  commit is a permanent public record even if a later commit removes the string.
+  Grep before every commit — the scrub list is in the commit history, and
+  `tests/unit/test_coexistence.py` pins the handful of the other project's
+  well-known values that are legitimately present as literals. Nothing else about
+  the internal origin belongs in a file here.
 
 ## Coexistence is a constraint, not a preference
 
-This repository is named `appistry` and the project inside it is **Roost**. The
-mismatch is deliberate: Roost was forked from a separate app launcher called
-Appistry which is *still in use on the same machines*, and the two must be
-installable and runnable at the same time. The repository name is history; the
-runtime identity is not.
+Roost was forked from a separate app launcher called Appistry which is *still in use
+on the same machines*, and the two must be installable and runnable at the same
+time. This repository was itself named `appistry` until it was renamed to match its
+runtime identity — but **the rename settled nothing below.** The other Appistry is a
+different project in a different repository, it still owns `~/.appistry`, and every
+constraint here is still live. If you find yourself reasoning "the rename means we
+can drop that", you have confused this repository's former name with the tool it has
+to coexist with.
 
 Concretely, this is why the code looks the way it does:
 

@@ -3,12 +3,12 @@ requires = ["setuptools==83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# "roost", not "appistry". The GitHub repository keeps the name it was forked
-# under, but the runtime identity does not: a separate internal tool called
-# Appistry is still in daily use on the same machines, owning the `appistry`
-# console script, ~/.appistry, and top-level `appistry`/`menubar`/`windows_*`
-# modules. A repo name and a distribution name need not match, and here they must
-# not — see the COEXISTENCE section of README.md.
+# "roost", not "appistry", and this must stay true even though the repository has
+# since been renamed to match. A separate internal tool called Appistry is still in
+# daily use on the same machines, owning the `appistry` console script, ~/.appistry,
+# and top-level `appistry`/`menubar`/`windows_*` modules. Installing this
+# distribution must never displace that one — see the coexistence section of
+# README.md. The constraint is the other tool's existence, not this repo's old name.
 name = "roost"
 dynamic = ["version"]
 description = "One shared status menu bar for the ravens: Huginn and Muninn"
@@ -37,10 +37,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage      = "https://github.com/tohuw/appistry"
-Repository    = "https://github.com/tohuw/appistry"
-Issues        = "https://github.com/tohuw/appistry/issues"
-Documentation = "https://github.com/tohuw/appistry/blob/main/SPEC.md"
+Homepage      = "https://github.com/tohuw/roost"
+Repository    = "https://github.com/tohuw/roost"
+Issues        = "https://github.com/tohuw/roost/issues"
+Documentation = "https://github.com/tohuw/roost/blob/main/SPEC.md"
 
 [project.scripts]
 roost = "roost.cli:main"

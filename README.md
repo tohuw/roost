@@ -2,12 +2,13 @@
 
 One shared status menu bar for the ravens.
 
-> **A note on the name.** This repository is called `appistry` for historical
-> reasons — it was forked from an app launcher of that name — but the project it
-> holds is **Roost**, and that is what it installs: the `roost` command, the
-> `roost` distribution, and its own state directory. The two are separate tools
-> and can be installed and run at the same time. See
-> [Coexistence](#coexistence-with-appistry).
+> **A note on the history.** Roost was forked from a separate app launcher called
+> **Appistry**, which is still in use, and this repository carried that name until
+> it was renamed to match what it installs: the `roost` command, the `roost`
+> distribution, and its own state directory. The two are separate tools and can be
+> installed and run at the same time — see
+> [Coexistence](#coexistence-with-appistry). Links to `tohuw/appistry` still
+> redirect here.
 
 [Huginn](https://github.com/tohuw/huginn) is an AI agent activity console.
 [Muninn](https://github.com/tohuw/muninn) is its agent-history companion. Thought
@@ -64,7 +65,8 @@ raven change its own menu with no change to Roost.
   with a visible reason** — never as a silent omission and never as a crash
 - Elects exactly one host process by a single exclusive lock, released by the
   kernel if that process dies
-- Lets you pick the tray icon, defaulting to the raven
+- Lets you pick the tray icon, defaulting to the raven (see the note in
+  [`roost/assets/CREDITS.md`](roost/assets/CREDITS.md) about the `roost` one)
 - Starts after login via launchd on macOS or the Startup folder on Windows
 
 Everything binds to `127.0.0.1`. Roost makes no outbound network requests and
@@ -102,8 +104,8 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 Requires Python 3.10 or newer.
 
 ```bash
-git clone https://github.com/tohuw/appistry.git
-cd appistry
+git clone https://github.com/tohuw/roost.git
+cd roost
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m roost.cli install
@@ -112,8 +114,8 @@ python3 -m venv .venv
 On Windows (PowerShell):
 
 ```powershell
-git clone https://github.com/tohuw/appistry.git
-Set-Location appistry
+git clone https://github.com/tohuw/roost.git
+Set-Location roost
 py -3 -m roost.cli install
 ```
 
@@ -175,9 +177,15 @@ never owned them.
 ## Coexistence with Appistry
 
 Roost was forked from **Appistry**, a local app-registry-and-launcher that is a
-separate project and still in use. The two share a git history and nothing else.
-They are designed to run **simultaneously** on the same machine and the same user
-account, so installing one never displaces the other.
+separate project, lives in a different repository, and is still in use. The two
+share a git history and nothing else. They are designed to run **simultaneously**
+on the same machine and the same user account, so installing one never displaces
+the other.
+
+This section is about that other tool, not about this repository's former name.
+Renaming the repo changed nothing here: Appistry is still installed on the same
+machines, still owns `~/.appistry`, and every collision below is still one Roost
+has to avoid.
 
 That works because Roost owns a distinct name for everything an OS can collide
 on:
