@@ -25,3 +25,12 @@ here before shipping.
 
 Roost's own mark. Copyright 2026 Ron Scott-Adams, licensed under the same
 Apache-2.0 terms as the rest of this repository — see [`../../LICENSE`](../../LICENSE).
+
+**Known issue: this art is still the launcher's.** It is four purple squares — an
+app-grid glyph inherited from Appistry, where it meant "a registry of apps to
+launch". It means nothing for a status menu bar, which launches nothing. It is
+shipped anyway rather than deleted, because deleting it would remove a name from
+`roost icon list` that someone may have selected, and the raven is the default, so
+this only reaches a menu bar if a user explicitly runs `roost icon set roost`.
+Recorded here rather than quietly left for someone to notice: replacing it needs a
+drawing, not a code change — drop an SVG in and run `tools/build-icons.sh`.

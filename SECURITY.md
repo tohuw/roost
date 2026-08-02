@@ -10,8 +10,14 @@ Please **do not** open a public GitHub issue for security vulnerabilities.
 
 Report findings privately through GitHub's private vulnerability reporting:
 
-1. Go to <https://github.com/tohuw/appistry/security/advisories/new>
+1. Go to <https://github.com/tohuw/roost/security/advisories/new>
 2. Or open the repository's **Security** tab and choose **Report a vulnerability**
+
+If that form is unavailable to you — private reporting has to be enabled on the
+repository, and if it is off the link 404s — say so in a normal issue **without the
+details**, asking for a private channel. An issue reading "I have a security finding
+about the help server, how do I send it privately" discloses nothing and is a better
+outcome than a report nobody could file.
 
 Include:
 
