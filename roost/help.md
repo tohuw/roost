@@ -41,7 +41,9 @@ raven adds something new, it appears here without Roost needing an update.
 - **A ● row** is something that wants you. **A · row** is quieter — background
   detail rather than a request.
 - **Clicking a row** tells that raven to act on it. Rows that open a page open it
-  in your browser, always against that raven's own address.
+  in your browser, always against that raven's own address. If a raven offers a
+  row like *Quit* or *Restart*, that is the raven acting on itself — Roost just
+  passes the click along.
 - **Greyed-out rows** are headings, or something the raven has marked as not
   currently actionable.
 - **Tray icon** changes the icon in your menu bar. The raven is the default, and
@@ -55,6 +57,13 @@ raven adds something new, it appears here without Roost needing an update.
 
 Only running ravens appear. If one is not there, it is not running — start it the
 way you normally would, and it will show up within a few seconds.
+
+**Roost cannot start it for you, and there is no menu item that will.** A raven
+that is not running has taken its status file away, so Roost has no way to know it
+was ever installed — there is nothing for it to offer you. Start it however you
+normally start it (Huginn: `huginn serve`), or set it to start automatically when
+you sign in, which is what `huginn install-agent` does. After that it is your
+computer, not Roost, that keeps the raven running.
 
 If a raven *is* there but greyed out, the menu says why underneath its name:
 
@@ -87,6 +96,12 @@ For the same information in a terminal, run `roost ravens`.
 Your ravens keep running. Roost watches them; it does not run them, so closing
 it never stops them — it just means nothing is showing you what they are doing.
 The icon comes back the next time you sign in, or immediately with `roost ui`.
+
+To quit a *raven*, use its own row if it offers one — a **Quit Huginn** inside
+Huginn's part of the menu stops Huginn and leaves Roost and any other raven
+running. Note that if you have set that raven to start automatically at login, your
+system may start it straight back up; that is the login setting doing its job, and
+removing it is how you make a quit stick.
 
 ---
 

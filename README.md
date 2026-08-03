@@ -60,7 +60,9 @@ raven change its own menu with no change to Roost.
 
 - Shows every running raven, ordered by the priority each one declares
 - Forwards clicks back to the raven that published them, under that raven's own
-  credential
+  credential — including a raven's own **Quit** or **Restart** row, which is an
+  ordinary action id Roost passes back without knowing what it does
+- Does **not** start a raven: see [Lifecycle](#lifecycle-what-roost-does-and-does-not-own)
 - Renders an unreachable, stopped, or malformed raven as a **disabled section
   with a visible reason** — never as a silent omission and never as a crash
 - Elects exactly one host process by a single exclusive lock, released by the
@@ -71,6 +73,34 @@ raven change its own menu with no change to Roost.
 
 Everything binds to `127.0.0.1`. Roost makes no outbound network requests and
 holds no credential of its own.
+
+## Lifecycle: what Roost does and does not own
+
+Roost replaces menu bars that owned their daemon's lifecycle, so it is worth being
+exact about which parts came along.
+
+**Quit and Restart did.** They are not features of Roost — they are rows a raven
+publishes, with ordinary action ids, that Roost forwards like any other. A running
+process can stop itself; it needs no help from the menu bar, and Roost stays
+unaware that a row labelled *Quit Huginn* is different from one labelled *Approve*.
+Adding them needed no change here and no protocol version bump.
+
+**Starting a stopped raven did not, deliberately.** A stopped raven has withdrawn
+its descriptor, so Roost cannot see it: there is no name, no port, and no row to
+click. The fix that suggests itself — a file recording an interpreter and a
+checkout for Roost to run — is a write-then-execute path, and Huginn already paid
+for that once (its `daemon.json` needed 0600, an ownership check, and a
+group/world-writable check on every parent directory before the old macOS app
+could safely execute the interpreter it named). Putting one of those in a *shared*
+host would mean one process holding an exec path for every raven on the machine.
+
+Starting at login is the OS supervisor's job and already works without Roost:
+`huginn install-agent` registers a launchd agent, a systemd user unit, or a Windows
+`Run` key. Roost is not part of that relationship and executes nothing.
+
+So: **the ravens run themselves, the OS starts them, and Roost reports on them.**
+[SPEC.md §10](SPEC.md#10-lifecycle-quitting-restarting-and-starting) states this
+normatively and lists what else was considered.
 
 ## Security posture
 

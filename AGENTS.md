@@ -17,6 +17,18 @@ up after anything. It reads status and draws it. If a change you are making need
 architecture this repository deliberately removed, and reintroducing it is the
 mistake to avoid.
 
+The request that will tempt you into it is **"add a Start button for a stopped
+raven"**, because Roost replaced menu bars that had one. Read
+[SPEC.md §10](SPEC.md#10-lifecycle-quitting-restarting-and-starting) before
+writing any of it. The short version: a stopped raven has withdrawn its
+descriptor, so there is nothing to attach a row *to*, and every way of
+manufacturing one (a registration file naming an interpreter, a descriptor that
+outlives its process, a launchd label the host looks up) ends with this process
+holding an exec path or a registry it has to trust. Quit and Restart, by contrast,
+are already possible and need nothing here — they are action ids a raven publishes
+and `host.activate` forwards, indistinguishable to Roost from `focus:abc123`. If a
+change makes them distinguishable, that is the bug.
+
 ## Architecture
 
 Everything platform-neutral is shared; only the last mile is per-platform.
