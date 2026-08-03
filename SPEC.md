@@ -32,7 +32,8 @@ next to the examples rather than instead of them — see
 7. [Host election](#7-host-election)
 8. [Liveness and unavailability](#8-liveness-and-unavailability)
 9. [What the host requires of your HTTP surface](#9-what-the-host-requires-of-your-http-surface)
-10. [A raven's checklist](#10-a-ravens-checklist)
+10. [Lifecycle: quitting, restarting, and starting](#10-lifecycle-quitting-restarting-and-starting)
+11. [A raven's checklist](#11-a-ravens-checklist)
 
 ---
 
@@ -205,6 +206,15 @@ change.
 rejected throughout, so adding a menu field or an endpoint key is not a protocol
 change. Reserve a bump for something that genuinely breaks an older reader.
 
+Lifecycle ([§10](#10-lifecycle-quitting-restarting-and-starting)) is the worked
+example, and the useful one because it *sounds* like a protocol change and is not:
+a raven that publishes a **Quit** row is publishing an ordinary action id, so the
+window stayed `1..1` and an older host renders the row correctly without knowing
+what it does. Had it been spelled as a `lifecycle` field the host had to
+recognise, every host below the bump would have had to be told — for a feature
+that needed nothing from the host at all. **Reach for a new id before a new
+field, and for a new field before a new version.**
+
 ---
 
 ## 4. The menu
@@ -317,6 +327,12 @@ an instruction.
 The host bounds the call (5 s) and refuses to send an id that is not printable
 text. A failure is logged and shown at the next refresh; it never raises into the
 menu.
+
+An action may do anything, **including ending the process that answered it** — see
+[§10](#10-lifecycle-quitting-restarting-and-starting). Nothing about that is
+special to the host, which is the point; the only requirement it places on you is
+the ordinary one above, that you answer within the timeout rather than dying
+mid-response.
 
 ### Links
 
@@ -484,7 +500,97 @@ menu.
 
 ---
 
-## 10. A raven's checklist
+## 10. Lifecycle: quitting, restarting, and starting
+
+Ravens replaced menu bars that owned the daemon's lifecycle — they started a dead
+daemon, stopped a live one, and offered a restart. This section says how each of
+those is expressed here, and it is deliberately short in one direction: **two of
+the three need nothing new, and the third is not the host's job.**
+
+### Quit and Restart are ordinary actions
+
+A running raven can stop or restart *itself*. It is a process; it has a signal
+handler and an exit path; it does not need a second process to end it. So these
+are published exactly like any other row:
+
+```json
+{"id": "quit", "label": "Quit Huginn"}
+{"id": "restart", "label": "Restart Huginn"}
+```
+
+There is **no `lifecycle` field, no reserved id, and no version bump**, because
+nothing above changes what the host does. The host draws the label and POSTs the
+id back, as it does for `focus:s-1`. It does not know that `quit` ends a process
+any more than it knows what `focus:s-1` focuses, and that ignorance is the
+property [§1](#1-the-shape-of-the-protocol) is built on — a host that recognised
+`quit` would be interpreting a companion's data, and would then owe every raven
+an opinion about what stopping means.
+
+Two consequences follow, and both are on the raven:
+
+- **Answer before you exit.** The host waits up to 5 s for a response
+  ([§5](#5-actions-and-links)). A raven that dies inside the request handler makes
+  a successful quit look like a failure. Reply, *then* shut down — ask your own
+  event loop to stop and let the HTTP response drain first.
+- **Withdraw on the way out**, as [§2](#2-the-descriptor) already requires. A quit
+  that leaves a descriptor behind is a raven the host reports as
+  `Not running (its recorded process is gone).` rather than one that is simply
+  gone.
+
+A raven that offers no lifecycle rows is complete and correct. These are not
+required ids; nothing here reserves the words `quit` or `restart`, and a raven may
+name them anything, translate them, or omit them.
+
+### Starting a stopped raven is not the host's job
+
+> **Roost never starts a raven.** Not by `Popen`, not by `launchctl`, not from a
+> path recorded in a file. If a raven is stopped, Roost has nothing to click.
+
+This is the one place the protocol says *no* rather than *how*, so it is worth
+being precise about why — the naive fix looks small and is not.
+
+**There is nothing to click on.** A stopped raven has no descriptor: [§2](#2-the-descriptor)
+requires withdrawal on exit, so the directory is empty and the host has no name,
+no port, and no row. Verified: with nothing running, `~/.local/state/ravens/` has
+no files in it. An action is a row in *some raven's* menu, and there is no menu.
+"Start Huginn" is therefore not expressible as an action — not by convention, but
+by construction.
+
+**The obvious repairs each reintroduce something worse.** All three were
+considered and rejected:
+
+| Rejected | Why |
+|---|---|
+| A **persistent registration** written at install time, naming an interpreter and a checkout for the host to run | This is a write-then-execute path with the file as the only gate. Huginn already shipped exactly this — `daemon.json` records `python` and `repo` so a tray could relaunch a dead daemon — and it needed 0600, an ownership check, a group/world-writable check on every parent, and a bounded ancestor walk before it was safe, because the old macOS app *executed* the interpreter named in it. Moving that into a shared host multiplies it: every raven's registration becomes an exec path in one process. |
+| A **withdrawn-but-present descriptor** marked `stopped` | It contradicts [§2](#2-the-descriptor) and [§8](#8-liveness-and-unavailability). A file that outlives its process is exactly what the PID and `started` cross-check exists to disbelieve, and a `stopped` flag would be a self-reported claim the host cannot verify — a crashed raven and a cleanly-stopped one would be indistinguishable except by a field the dead process did not get to write. It also turns "uninstalled" into a state nobody ever clears. |
+| The host asking the **OS supervisor** (`launchctl kickstart`, `systemctl --user start`) on the raven's behalf | Closer — the exec is the supervisor's, not the host's — but the host still has to learn *which* unit belongs to which raven, from a descriptor that is not there. It would need a second persistent registry keyed by raven name, which is the first row of this table again with a launchd label in place of an interpreter path. |
+
+**What answers the need instead.** The OS supervisor already does this, without
+the host in the picture at all: a raven registers a login agent (Huginn's
+`install-agent` — launchd on macOS, a systemd user unit on Linux, a `Run` key on
+Windows) and the OS starts it at login and, on macOS, restarts it after a crash.
+That is a supervisor relationship between the raven and the OS. Roost is not a
+party to it, holds no path from it, and executes nothing.
+
+So the honest division is:
+
+| Want | Who does it |
+|---|---|
+| Stop a running raven | The raven, via an action id it published |
+| Restart a running raven | The raven, the same way |
+| Start it at login, keep it up | The OS supervisor the raven registered with |
+| Start it right now, from stopped | The user — a shell, or the login agent — **not the menu bar** |
+
+**A note for a raven implementing Quit.** If a supervisor with a restart policy is
+installed, quitting may not stick: launchd's `KeepAlive` relaunches the daemon even
+after a clean exit — deliberately, and Huginn documents removing the agent first.
+That conflict is between the raven and its supervisor, and it is one the host
+cannot mediate, which is another way of saying the host was never the right place
+for a start button.
+
+---
+
+## 11. A raven's checklist
 
 **Startup**
 
@@ -499,6 +605,8 @@ menu.
 4. Serve `menu` returning the JSON in [§4](#4-the-menu). Keep it fast: it is on
    the host's menu-build path.
 5. Serve `action` if you publish any ids, and match each against what you issued.
+   If any of them stop or restart you, answer *before* you exit
+   ([§10](#10-lifecycle-quitting-restarting-and-starting)).
 6. On every request: check `Host`, reject any `Origin`, guard `Content-Length`,
    compare the token in constant time.
 7. Rewrite the descriptor if your port or token path changes.
@@ -511,7 +619,11 @@ menu.
 
 - Compare `api_version` for equality.
 - Assume the host will authenticate for you, or supply a credential.
-- Assume the host understands what any of your ids mean.
+- Assume the host understands what any of your ids mean — including one that
+  stops you.
+- Assume the host will start you. It never will
+  ([§10](#10-lifecycle-quitting-restarting-and-starting)); register with your
+  platform's login agent instead.
 - Assume you are the host, or that another raven is running.
 - Return an unbounded response, or block a menu fetch indefinitely.
 

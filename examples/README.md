@@ -4,7 +4,7 @@ Two worked examples of the raven side of the contract in [`../SPEC.md`](../SPEC.
 
 | File | What it shows |
 |------|---------------|
-| [`huginn_raven.py`](huginn_raven.py) | The leading raven: a higher `host_priority`, an attention badge, per-item actions, and a token file |
+| [`huginn_raven.py`](huginn_raven.py) | The leading raven: a higher `host_priority`, an attention badge, per-item actions, a token file, and a lifecycle **Quit** row |
 | [`muninn_raven.py`](muninn_raven.py) | The companion raven: the same contract with a lower priority, link-only rows, and no token |
 
 They are **documentation that runs**, not libraries. Neither is imported by
@@ -73,3 +73,24 @@ declared it. Roost never mints a credential and never shares one between
 ravens, so a raven that wants authentication has to publish its own — and a
 raven that publishes none gets unauthenticated requests, which is its decision
 to make.
+
+## Lifecycle, and the row that cannot exist
+
+`huginn_raven.py` publishes a **Quit** row. Look at how little it took: an id in
+`build_menu`, a branch in `perform_action`, and no change to Roost or to the
+protocol version. That is the intended shape — stopping yourself is something a
+process can do, so it is an ordinary action and the host never learns what it means.
+
+The one thing to copy exactly is the *ordering*. `perform_action` sets an event
+rather than exiting, and `main` waits on it, because the response still has to be
+written to the socket — and because calling `shutdown()` from inside a request
+handler deadlocks a threaded server against the very request that called it. A
+raven that exits in its handler turns a successful quit into an action the host
+reports as failed.
+
+There is **no Start row in either example, and there cannot be one.** A stopped
+raven has removed its descriptor, so Roost has no name, no port, and nothing to
+draw — the row would have nowhere to live. Starting a stopped raven belongs to the
+OS supervisor (`huginn install-agent` and its equivalents), never to the menu bar.
+[SPEC.md §10](../SPEC.md#10-lifecycle-quitting-restarting-and-starting) records the
+alternatives that were rejected and why.

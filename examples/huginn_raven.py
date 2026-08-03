@@ -37,6 +37,17 @@ provide.
 **Defend the port.** A loopback port is reachable by any web page the user has
 open, so ``Host`` must be loopback and any ``Origin`` is refused. That check is
 the raven's own — the host is not a security boundary on the raven's behalf.
+
+It also shows the lifecycle rows of ``SPEC.md`` §10 — a **Quit** that stops *this*
+process. There is nothing special about them: they are action ids like any other,
+and the host cannot tell them apart from ``focus:s-1``. What they demonstrate is
+the one ordering rule that is easy to get wrong — **answer, then exit**. A raven
+that terminates inside its own request handler makes a successful quit look like a
+failed action to the host, which is still waiting for a response.
+
+There is deliberately **no Start row**, because there cannot be one: a stopped
+raven has withdrawn its descriptor, so the host has nothing to draw. Starting is
+the OS supervisor's job (§10).
 """
 
 from __future__ import annotations
@@ -51,6 +62,7 @@ import socket
 import socketserver
 import sys
 import tempfile
+import threading
 import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -70,6 +82,11 @@ MAX_API = 1
 HOST_PRIORITY = 100
 
 TOKEN_HEADER = "X-Huginn-Token"
+
+#: The action id for the lifecycle row this raven publishes. A plain id in this
+#: raven's own vocabulary — the protocol reserves no word for it, and the host
+#: attaches no meaning to it (SPEC.md §10).
+QUIT_ACTION = "quit"
 
 #: A menu request is on the host's menu-build path, so keep the body small and
 #: bounded. This is also the cap the host enforces on its side.
@@ -124,6 +141,12 @@ SESSIONS = [
 
 _acknowledged: set[str] = set()
 
+#: Set by the ``quit`` action instead of exiting inside the request handler, so
+#: the response reaches the host before this process goes away (SPEC.md §10).
+#: A ``threading.Event`` because the server is threaded: the action runs on a
+#: request thread and the shutdown has to happen on the main one.
+_shutdown_requested = threading.Event()
+
 
 def build_menu() -> dict:
     """Return this raven's whole menu contribution.
@@ -175,6 +198,16 @@ def build_menu() -> dict:
     items.append({"id": "open-console", "label": "Open Console", "url": "/"})
     sections.append({"id": "sessions", "title": "Sessions", "items": items})
 
+    # Lifecycle (SPEC.md §10). Ordinary action ids: the host draws the label and
+    # POSTs the id back exactly as it does for "focus:s-1", with no idea that this
+    # one ends the process it is talking to. There is no Start row and cannot be —
+    # once this process exits, its descriptor is gone and the host has nothing to
+    # hang a row on.
+    sections.append({
+        "id": "lifecycle",
+        "items": [{"id": QUIT_ACTION, "label": f"Quit {DISPLAY}"}],
+    })
+
     return {
         "api_version": MAX_API,
         # The host uses this in place of the descriptor's display name when
@@ -194,9 +227,17 @@ def perform_action(action_id: str) -> dict:
     The id is this raven's own vocabulary, round-tripped through the host
     unchanged. It still arrives over HTTP from another process, so it is matched
     against what this raven actually issued rather than parsed for meaning.
+
+    ``quit`` does **not** exit here, and that is the point worth copying: this
+    function's return value still has to be serialised and written to the socket.
+    It records the intent and lets the caller shut down once the response is out
+    (SPEC.md §10).
     """
     if action_id == "open-console":
         return {"ok": True}
+    if action_id == QUIT_ACTION:
+        _shutdown_requested.set()
+        return {"ok": True, "stopping": True}
     if action_id.startswith("focus:"):
         session_id = action_id[len("focus:"):]
         if any(session["id"] == session_id for session in SESSIONS):
@@ -438,9 +479,18 @@ def main() -> int:
     print(f"{DISPLAY} listening on http://127.0.0.1:{port}")
     print(f"  descriptor {descriptor}")
     print(f"  token      {token_path}")
-    print("Ctrl-C to stop.")
+    print("Ctrl-C to stop, or use this raven's own Quit row in the menu.")
+
+    # serve_forever() runs on its own thread so this one can wait on the quit
+    # event. Calling shutdown() from inside a request handler would deadlock:
+    # shutdown() waits for the serve loop to finish the request that is calling
+    # it. Waiting here instead is what lets the response go out first.
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
     try:
-        server.serve_forever()
+        while not _shutdown_requested.wait(0.5):
+            pass
+        print(f"{DISPLAY} stopping: the menu asked it to.")
     except KeyboardInterrupt:
         pass
     finally:
