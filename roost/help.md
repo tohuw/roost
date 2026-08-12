@@ -46,9 +46,8 @@ raven adds something new, it appears here without Roost needing an update.
   passes the click along.
 - **Greyed-out rows** are headings, or something the raven has marked as not
   currently actionable.
-- **Tray icon** changes the icon in your menu bar. The raven is the default, and
-  the one called *Roost* is a leftover from the launcher this was forked from — it
-  is a grid of squares that means nothing here. Pick it if you like it.
+- **Tray icon** changes the icon in your menu bar. The raven is the default; the
+  optional *Roost* mark is a raven at rest in a nest.
 - **Help** opens this page.
 
 ---

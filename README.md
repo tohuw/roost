@@ -67,8 +67,8 @@ raven change its own menu with no change to Roost.
   with a visible reason** — never as a silent omission and never as a crash
 - Elects exactly one host process by a single exclusive lock, released by the
   kernel if that process dies
-- Lets you pick the tray icon, defaulting to the raven (see the note in
-  [`roost/assets/CREDITS.md`](roost/assets/CREDITS.md) about the `roost` one)
+- Lets you pick the tray icon, defaulting to the raven; the optional `roost` mark
+  is a raven at rest in a nest
 - Starts after login via launchd on macOS or the Startup folder on Windows
 
 Everything binds to `127.0.0.1`. Roost makes no outbound network requests and

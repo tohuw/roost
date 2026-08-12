@@ -50,7 +50,9 @@ class TestShippedAssets:
         "raven.svg",
         "raven.png", "raven@2x.png",
         "raven-template.png", "raven-template@2x.png",
-        "roost.png", "roost-template.png",
+        "roost.svg",
+        "roost.png", "roost@2x.png",
+        "roost-template.png", "roost-template@2x.png",
         "CREDITS.md",
     ])
     def test_asset_is_present(self, name):

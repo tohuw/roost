@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A raven at rest: compact enough to read at status-item size. -->
+  <g fill="#C96A3D">
+    <path d="M8 43c0-7 10-12 24-12s24 5 24 12-10 13-24 13S8 50 8 43Z"/>
+    <path d="M12 44c5 5 13 7 20 7s15-2 20-7v5c-5 5-13 7-20 7s-15-2-20-7Z" fill="#A94E32"/>
+  </g>
+  <path d="M13 42c5 3 10 4 19 4s14-1 19-4" fill="none" stroke="#E0A63D" stroke-linecap="round" stroke-width="3"/>
+  <g fill="#202A38">
+    <path d="M20 40c0-10 4-19 13-19 7 0 12 6 12 15 0 5-3 9-8 9-8 0-17-1-17-5Z"/>
+    <circle cx="35" cy="19" r="9"/>
+    <path d="m42 18 10 3-10 3Z"/>
+    <path d="M19 41c4-9 9-13 15-14-2 8-7 13-15 14Z" fill="#334151"/>
+  </g>
+  <circle cx="38" cy="17" r="1.6" fill="#E0A63D"/>
+</svg>

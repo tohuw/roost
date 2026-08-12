@@ -158,11 +158,10 @@ either tray's rendering, that file is the one that catches the drift.
   allowed coupling, and a protocol change is a note to their maintainers, not a
   commit in their tree.
 
-- **`roost/assets/roost.png` is still the launcher's four-square mark.** Known and
-  documented in `roost/assets/CREDITS.md`. It is not the default (the raven is), so
-  it only appears if a user runs `roost icon set roost`. Fixing it needs a drawing,
-  not code; do not paper over it by removing the icon from the catalog, because that
-  would break a selection someone already made.
+- **The `roost` icon is a compact raven at rest in a nest.** It is not the default
+  (the raven is), so it only appears if a user runs `roost icon set roost`. Keep the
+  catalog entry if the artwork changes; removing it would break a selection someone
+  already made.
 
 - **The raven icon is a licence obligation.** *Raven* by Lorc, game-icons.net, CC
   BY 3.0. `roost/assets/CREDITS.md` must keep crediting it for as long as the art
