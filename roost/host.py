@@ -37,6 +37,11 @@ if not _IS_WINDOWS:
 else:  # pragma: no cover - exercised on Windows only
     fcntl = None
 
+# Where the Windows lock byte sits: past any PID the file will ever hold, so the
+# mandatory lock never covers the recorded PID. Locking a byte beyond end-of-file
+# is legal and is the documented way to get a whole-file lock without the data.
+_LOCK_SENTINEL_OFFSET = 1 << 30
+
 log = logging.getLogger(__name__)
 
 #: The host lock's filename. Named for this project, not for the platform surface
@@ -151,14 +156,19 @@ class HostLock:
                 f"The host lock at {self.path} could not be opened "
                 f"({exc.__class__.__name__}).",
             )
+        # Lock a byte far past the PID rather than byte 0. Unlike flock, which is
+        # advisory, msvcrt.locking is *mandatory*: a locked byte 0 cannot be read
+        # by anyone, so the lock would hide the very PID it was recording and
+        # holder_pid() would report no host at all.
         try:
-            handle.seek(0)
+            handle.seek(_LOCK_SENTINEL_OFFSET)
             msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
             handle.close()
             return self._fail(
                 CONTENDED, "Another Roost process is already hosting the menu."
             )
+        handle.seek(0)
         self._handle = handle
         self._record_pid()
         return True

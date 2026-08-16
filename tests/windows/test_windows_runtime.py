@@ -66,8 +66,9 @@ def test_the_host_lock_is_released_when_the_holder_exits(tmp_path):
     path = tmp_path / "roost.lock"
     script = (
         f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r})\n"
-        "import host\n"
-        f"lock = host.HostLock({str(path)!r})\n"
+        "from pathlib import Path\n"
+        "from roost import host\n"
+        f"lock = host.HostLock(Path({str(path)!r}))\n"
         "assert lock.acquire() is True\n"
     )
     subprocess.run([sys.executable, "-c", script], check=True, capture_output=True)
