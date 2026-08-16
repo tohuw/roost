@@ -23,6 +23,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from roost import windows_support
 
 
+class TestTheHoverTooltip:
+    """The other place the tray said something that was not its name.
+
+    Read as source rather than imported: ``windows_tray`` needs pystray, which
+    is a Windows-only dependency, and this identity is worth pinning on every
+    platform's CI run.
+    """
+
+    SOURCE = (Path(__file__).resolve().parents[2]
+              / "roost" / "windows_tray.py").read_text(encoding="utf-8")
+
+    def test_it_names_the_app(self):
+        assert 'TOOLTIP = "Roost"' in self.SOURCE
+
+    def test_the_icon_is_given_the_tooltip_rather_than_a_literal(self):
+        """It said "Ravens" — the menu's contents, which reads as another app.
+
+        Walks the AST rather than the text: the comment explaining the old
+        value names it, and a substring check cannot tell an explanation of
+        the hazard from the hazard.
+        """
+        import ast
+
+        assert "_tray_image(), TOOLTIP," in self.SOURCE
+        literals = {
+            node.value for node in ast.walk(ast.parse(self.SOURCE))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        assert "Ravens" not in literals
+
+
 def _venv(tmp_path: Path, home: Path) -> Path:
     repo = tmp_path / "roost"
     (repo / ".venv" / "Scripts").mkdir(parents=True)

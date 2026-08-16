@@ -36,6 +36,10 @@ log = logging.getLogger(__name__)
 #: same speed on both platforms.
 POLL_SECONDS = 5
 
+#: What Windows shows when the tray icon is hovered. The app's name, not a
+#: description of the menu behind it.
+TOOLTIP = "Roost"
+
 
 def _tray_image():
     """Load the configured tray icon as an RGBA bitmap for pystray.
@@ -68,7 +72,12 @@ class RoostWindowsTray:
             # The pystray name is the tray's OS-level identity on Windows. It must
             # not be "appistry": the separate internal Appistry ships its own
             # Windows tray under that name, and both can be running.
-            "roost", _tray_image(), "Ravens", menu=self._build_menu()
+            #
+            # The third argument is the hover tooltip, and it names *this app*,
+            # not what the menu happens to contain. "Ravens" read as the name of
+            # some other program to anyone hovering over it -- the same identity
+            # confusion the Taskbar entry had when it said "Python".
+            "roost", _tray_image(), TOOLTIP, menu=self._build_menu()
         )
 
     # ── Rendering ────────────────────────────────────────────────────────────
