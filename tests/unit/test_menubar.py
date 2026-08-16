@@ -354,12 +354,16 @@ class TestNotify:
 
 class TestIconKwargs:
     def test_the_default_icon_is_passed_as_a_template_on_macos(self, monkeypatch):
+        # Compared against str(chosen) rather than a literal: what matters is
+        # that the resolved path arrives intact, and a Path renders with the
+        # host OS's separator.
+        chosen = Path("/tmp/raven-template.png")
         monkeypatch.setattr(menubar.icons, "resolve", lambda: icons.IconChoice(
-            "raven", Path("/tmp/raven-template.png"), template=True
+            "raven", chosen, template=True
         ))
         kwargs = menubar._icon_kwargs()
         assert kwargs["template"] is True
-        assert kwargs["icon"] == "/tmp/raven-template.png"
+        assert kwargs["icon"] == str(chosen)
 
 
     def test_no_resolvable_icon_falls_back_to_a_title(self, monkeypatch):

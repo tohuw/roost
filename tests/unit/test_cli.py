@@ -28,6 +28,22 @@ def isolated_state(monkeypatch, tmp_path):
     return tmp_path
 
 
+def _require_symlinks(tmp_path: Path) -> None:
+    """Skip unless this machine will actually make a symlink.
+
+    Windows refuses without Developer Mode or elevation, and that is a property
+    of the machine rather than of the OS — a developer with it enabled should
+    still get the coverage. So this asks by trying, instead of reading
+    sys.platform and writing the whole platform off.
+    """
+    probe = tmp_path / "_symlink-probe"
+    try:
+        probe.symlink_to(tmp_path)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"this machine cannot create symlinks ({exc.__class__.__name__})")
+    probe.unlink()
+
+
 def _write_descriptor(directory: Path, name: str, **overrides):
     directory.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -266,6 +282,7 @@ class TestCmdUninstall:
     def test_uninstall_leaves_a_foreign_symlink_alone(
         self, monkeypatch, tmp_path, capsys
     ):
+        _require_symlinks(tmp_path)
         monkeypatch.setattr(cli.windows_support, "is_windows", lambda: False)
         monkeypatch.setattr(cli.Path, "home", classmethod(lambda _cls: tmp_path))
 

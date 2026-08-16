@@ -36,14 +36,31 @@ import webbrowser
 
 _IS_MACOS = sys.platform == "darwin"
 
-if _IS_MACOS:
+try:
+    # Ask for the real thing on every platform rather than branching on
+    # sys.platform. rumps only installs on macOS, so elsewhere this still falls
+    # through to the shim — but a stand-in already in sys.modules now wins,
+    # which is what lets this module's rendering be tested off macOS. Gating the
+    # import on the platform made the shim unconditional there, so the tests
+    # exercised the shim instead of the code under test.
     import rumps
-else:  # pragma: no cover - importability shim only
+except ImportError:  # pragma: no cover - importability shim only
     class _RumpsAppShim:
         pass
 
+    class _RumpsMenuItemShim:
+        def __init__(self, title):
+            self.title = title
+
+        def set_callback(self, _callback):
+            raise RuntimeError("rumps is unavailable on this platform")
+
+        def add(self, _item):
+            raise RuntimeError("rumps is unavailable on this platform")
+
     class _RumpsShim:
         App = _RumpsAppShim
+        MenuItem = _RumpsMenuItemShim
 
         @staticmethod
         def timer(_seconds):
