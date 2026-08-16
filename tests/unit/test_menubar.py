@@ -71,7 +71,6 @@ from roost.tray import RowKind
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
-    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path)
     monkeypatch.setattr(menubar.paths, "STATE_DIR", tmp_path)
     return tmp_path
 
@@ -221,11 +220,6 @@ class TestActivation:
         _app()._host_action("help")
         assert opened == ["http://127.0.0.1:1/"]
 
-    def test_choosing_an_icon_persists_it(self, monkeypatch):
-        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: host.MenuModel())
-        app = _app()
-        app._host_action(f"icon:{icons.DEFAULT_ICON}")
-        assert icons.configured_icon() == icons.DEFAULT_ICON
 
     def test_quit_releases_the_host_lock_and_stops_the_help_server(self, monkeypatch):
         events = []
@@ -347,17 +341,12 @@ class TestNotify:
 class TestIconKwargs:
     def test_the_default_icon_is_passed_as_a_template_on_macos(self, monkeypatch):
         monkeypatch.setattr(menubar.icons, "resolve", lambda: icons.IconChoice(
-            "raven", Path("/tmp/raven-template.png"), template=True, builtin=True
+            "raven", Path("/tmp/raven-template.png"), template=True
         ))
         kwargs = menubar._icon_kwargs()
         assert kwargs["template"] is True
         assert kwargs["icon"] == "/tmp/raven-template.png"
 
-    def test_a_user_icon_is_not_a_template(self, monkeypatch):
-        monkeypatch.setattr(menubar.icons, "resolve", lambda: icons.IconChoice(
-            "mine.png", Path("/tmp/mine.png"), template=False, builtin=False
-        ))
-        assert menubar._icon_kwargs()["template"] is False
 
     def test_no_resolvable_icon_falls_back_to_a_title(self, monkeypatch):
         """A tray with no icon at all is unclickable; a text title is not."""

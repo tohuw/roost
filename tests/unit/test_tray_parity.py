@@ -98,7 +98,6 @@ from roost.tray import RowKind
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
-    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path)
     return tmp_path
 
 
@@ -242,22 +241,3 @@ def test_both_trays_render_exactly_the_shared_rows(name):
     assert _windows_labels(_windows_menu(model)) == expected
 
 
-def test_both_trays_mark_the_same_active_icon():
-    model = host.MenuModel()
-
-    macos_submenu = next(
-        item for item in _macos_menu(model).menu.items
-        if item is not None and item.children
-    )
-    macos_checked = [child.title for child in macos_submenu.children if child.state]
-
-    windows_submenu = next(
-        item for item in _windows_menu(model).items
-        if item is not _PystrayMenu.SEPARATOR and isinstance(item.action, _PystrayMenu)
-    )
-    windows_checked = [
-        child.text for child in windows_submenu.action.items if child.checked(child)
-    ]
-
-    assert macos_checked == windows_checked
-    assert len(macos_checked) == 1

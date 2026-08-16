@@ -17,7 +17,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from roost import cli
-from roost import icons
 from roost import paths
 from roost import ravens
 
@@ -25,7 +24,6 @@ from roost import ravens
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "STATE_DIR", tmp_path / "roost")
-    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path / "roost")
     monkeypatch.setenv("RAVENS_STATE_DIR", str(tmp_path / "ravens"))
     return tmp_path
 
@@ -74,7 +72,7 @@ class TestNoLauncherVerbs:
 
     def test_the_remaining_verbs_are_the_documented_ones(self):
         assert set(cli.COMMANDS) == {
-            "install", "uninstall", "ui", "ravens", "icon"
+            "install", "uninstall", "ui", "ravens"
         }
 
 
@@ -160,68 +158,6 @@ class TestCmdRavens:
 
 
 # ── icon ──────────────────────────────────────────────────────────────────────
-
-class TestCmdIcon:
-    def test_list_marks_the_active_icon(self, capsys):
-        assert cli.cmd_icon(argparse.Namespace(icon_action="list")) == 0
-        assert capsys.readouterr().out.count("*") == 1
-
-    def test_set_persists_a_builtin_name(self):
-        code = cli.cmd_icon(
-            argparse.Namespace(icon_action="set", value=icons.DEFAULT_ICON)
-        )
-        assert code == 0
-        assert icons.configured_icon() == icons.DEFAULT_ICON
-
-    def test_set_rejects_an_unknown_name(self, capsys):
-        code = cli.cmd_icon(
-            argparse.Namespace(icon_action="set", value="not-an-icon")
-        )
-        assert code == 1
-        assert "not a built-in icon name" in capsys.readouterr().err
-
-    def test_set_rejects_a_relative_path(self):
-        code = cli.cmd_icon(
-            argparse.Namespace(icon_action="set", value="./sneaky.png")
-        )
-        assert code == 1
-
-    def test_set_rejects_an_unsupported_suffix(self, tmp_path):
-        """SVG is absent on purpose: neither toolkit can rasterize one."""
-        svg = tmp_path / "icon.svg"
-        svg.write_text("<svg/>", encoding="utf-8")
-        assert cli.cmd_icon(
-            argparse.Namespace(icon_action="set", value=str(svg))
-        ) == 1
-
-    def test_set_accepts_an_absolute_png(self, tmp_path):
-        png = tmp_path / "mine.png"
-        png.write_bytes(b"\x89PNG\r\n\x1a\n")
-        assert cli.cmd_icon(
-            argparse.Namespace(icon_action="set", value=str(png))
-        ) == 0
-        assert icons.configured_icon() == str(png)
-
-    def test_a_rejected_value_is_not_persisted(self, tmp_path):
-        assert cli.cmd_icon(
-            argparse.Namespace(icon_action="set", value="not-an-icon")
-        ) == 1
-        assert icons.configured_icon() == ""
-
-    def test_reset_clears_the_setting(self):
-        icons.set_icon("something")
-        assert cli.cmd_icon(argparse.Namespace(icon_action="reset")) == 0
-        assert icons.configured_icon() == ""
-
-    def test_a_bare_icon_verb_lists(self, monkeypatch, capsys):
-        monkeypatch.setattr(sys, "argv", ["roost", "icon"])
-        with pytest.raises(SystemExit) as exit_info:
-            cli.main()
-        assert exit_info.value.code == 0
-        assert "*" in capsys.readouterr().out
-
-
-# ── Parser ────────────────────────────────────────────────────────────────────
 
 class TestParser:
     def test_no_verb_prints_help_and_exits_zero(self, monkeypatch, capsys):

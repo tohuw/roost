@@ -101,7 +101,7 @@ class TestShortcuts:
         from roost import icons
 
         monkeypatch.setattr(icons, "resolve", lambda: icons.IconChoice(
-            "raven", icon, template=False, builtin=True
+            "raven", icon, template=False
         ))
         assert windows_support.prepare_tray_icon() == icon
 
@@ -112,7 +112,7 @@ class TestShortcuts:
         from roost import icons
 
         monkeypatch.setattr(icons, "resolve", lambda: icons.IconChoice(
-            "raven", source, template=False, builtin=True
+            "raven", source, template=False
         ))
         assert windows_support.prepare_tray_icon() is None
 

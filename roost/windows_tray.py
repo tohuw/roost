@@ -147,13 +147,6 @@ class RoostWindowsTray:
             webbrowser.open(help_server.url())
         elif action == "quit":
             self._shutdown()
-        elif action.startswith("icon:"):
-            icons.set_icon(action[len("icon:"):])
-            try:
-                self._icon.icon = _tray_image()
-            except (OSError, RuntimeError, ValueError):
-                log.warning("Could not load the selected tray icon", exc_info=True)
-            self._refresh()
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 

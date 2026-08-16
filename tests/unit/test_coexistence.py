@@ -31,7 +31,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from roost import cli
 from roost import help_server
 from roost import host
-from roost import icons
 from roost import paths
 from roost import ravens
 from roost import windows_support
@@ -145,7 +144,6 @@ def _owned_state_paths() -> dict[str, Path]:
         "state directory": paths.STATE_DIR,
         "host lock": host.host_lock_path(),
         "help port file": help_server.port_file_path(),
-        "icon config": icons.config_path(),
         "log": paths.log_path(),
         "tray PID file": windows_support.tray_pid_path(),
     }

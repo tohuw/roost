@@ -237,10 +237,6 @@ class RoostApp(rumps.App):
             webbrowser.open(help_server.url())
         elif action == "quit":
             self._quit()
-        elif action.startswith("icon:"):
-            icons.set_icon(action[len("icon:"):])
-            self._apply_icon()
-            self._build_menu()
 
     def _apply_icon(self) -> None:
         """Re-read the configured icon and put it in the menu bar.

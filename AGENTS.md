@@ -58,10 +58,10 @@ All paths below are relative to `roost/`.
 | `windows_tray.py` | Windows rendering of the same rows |
 | `windows_support.py` | Windows shortcuts, user PATH/environment, tray process |
 | `help_server.py` | The one loopback listener: the Help page and `/api/status` |
-| `icons.py` | Selectable tray icon, defaulting to the raven |
+| `icons.py` | The tray icon: the raven, resolved per platform |
 | `paths.py` | Roost's own state directory and the owner-only write helpers |
 | `sanitize.py` | Strips escapes/controls/bidi from untrusted strings |
-| `cli.py` | CLI: `install`, `uninstall`, `ui`, `ravens`, `icon` |
+| `cli.py` | CLI: `install`, `uninstall`, `ui`, `ravens` |
 | `__init__.py` | The product name and slug; the package docstring explains why the package exists |
 | `../examples/` | Two runnable reference ravens — documentation, not libraries. Both real ravens are now shipped too; `examples/README.md` links them |
 
@@ -133,7 +133,7 @@ either tray's rendering, that file is the one that catches the drift.
   raven must degrade to a disabled section, never to a frozen menu.
 
 - **Roost's own state is owner-only.** Everything in Roost's state directory — the host
-  lock, the help port file, the tray PID file, the icon config — is 0600 under a
+  lock, the help port file, the tray PID file — is 0600 under a
   0700 directory, created with restrictive permissions rather than chmodded after.
   Use `paths.secure_dir` / `paths.atomic_write_text`; do not open state files
   directly.
@@ -158,10 +158,11 @@ either tray's rendering, that file is the one that catches the drift.
   allowed coupling, and a protocol change is a note to their maintainers, not a
   commit in their tree.
 
-- **The `roost` icon is a compact raven at rest in a nest.** It is not the default
-  (the raven is), so it only appears if a user runs `roost icon set roost`. Keep the
-  catalog entry if the artwork changes; removing it would break a selection someone
-  already made.
+- **There is one icon, and no way to change it.** Selection was removed: a
+  submenu, a CLI verb, a config file and a validation surface, all so the mark
+  could be a different mark. The tray item is Roost's identity, and one that
+  looks like whatever was last picked is harder to find, not easier. The spare
+  artwork stays in `assets/` and stays credited.
 
 - **The raven icon is a licence obligation.** *Raven* by Lorc, game-icons.net, CC
   BY 3.0. `roost/assets/CREDITS.md` must keep crediting it for as long as the art

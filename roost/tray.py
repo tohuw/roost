@@ -25,7 +25,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from roost import host
-from roost import icons
 from roost import menu_spec
 from roost import sanitize
 
@@ -62,7 +61,6 @@ STYLE_MARKERS = {
 NO_RAVENS_LABEL = "No ravens are running"
 
 HELP_LABEL = "Help"
-ICON_LABEL = "Tray icon"
 QUIT_LABEL = "Quit Roost"
 
 
@@ -88,15 +86,6 @@ class Row:
     checked: bool = False
 
 
-@dataclass(frozen=True)
-class IconRow:
-    """One selectable tray icon in the icon submenu."""
-
-    label: str
-    value: str
-    active: bool
-
-
 def item_label(item: "menu_spec.MenuItem") -> str:
     """Return the display text for a published item.
 
@@ -120,19 +109,6 @@ def raven_label(menu: "menu_spec.RavenMenu") -> str:
     if menu.available and menu.spec.badge:
         return f"{display} ({menu.spec.badge})"
     return display
-
-
-def icon_rows() -> tuple[IconRow, ...]:
-    """Return the selectable icons, marking the one in use."""
-    active = icons.resolve()
-    return tuple(
-        IconRow(
-            label=sanitize.sanitize_label(choice.label) or choice.name,
-            value=choice.name if choice.builtin else str(choice.path),
-            active=icons.is_active(choice, active),
-        )
-        for choice in icons.choices()
-    )
 
 
 def raven_rows(menu: "menu_spec.RavenMenu") -> list[Row]:
@@ -187,19 +163,6 @@ def build_rows(model: "host.MenuModel") -> list[Row]:
         rows.append(Row(RowKind.REASON, label=NO_RAVENS_LABEL))
 
     rows.append(Row(RowKind.SEPARATOR))
-    rows.append(
-        Row(
-            RowKind.HOST,
-            label=ICON_LABEL,
-            action="icon",
-            enabled=True,
-            children=tuple(
-                Row(RowKind.HOST, label=row.label, action=f"icon:{row.value}",
-                    enabled=True, checked=row.active)
-                for row in icon_rows()
-            ),
-        )
-    )
     rows.append(Row(RowKind.HOST, label=HELP_LABEL, action="help", enabled=True))
     rows.append(Row(RowKind.SEPARATOR))
     rows.append(Row(RowKind.HOST, label=QUIT_LABEL, action="quit", enabled=True))

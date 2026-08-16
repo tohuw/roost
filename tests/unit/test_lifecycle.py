@@ -40,7 +40,6 @@ from roost.tray import RowKind
 @pytest.fixture(autouse=True)
 def no_user_icon_config(monkeypatch, tmp_path):
     """Keep the icon submenu deterministic and off the real config."""
-    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path)
     return tmp_path
 
 

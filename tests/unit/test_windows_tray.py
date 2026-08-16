@@ -47,7 +47,6 @@ class _FakePystray:
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
-    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path)
     monkeypatch.setattr(windows_tray.paths, "STATE_DIR", tmp_path)
     return tmp_path
 
@@ -115,18 +114,6 @@ class TestRendering:
         assert item.enabled is False
         assert item.text == "Text"
 
-    def test_the_submenu_marks_the_active_icon(self):
-        row = tray.Row(RowKind.HOST, label="Tray icon", action="icon", enabled=True,
-                       children=(
-                           tray.Row(RowKind.HOST, label="Raven", action="icon:raven",
-                                    enabled=True, checked=True),
-                           tray.Row(RowKind.HOST, label="Roost",
-                                    action="icon:roost", enabled=True),
-                       ))
-        item = _tray()._render(row)
-        children = item.action.items
-        assert [child.text for child in children] == ["Raven", "Roost"]
-        assert [child.checked(child) for child in children] == [True, False]
 
     def test_the_whole_menu_is_built_from_the_shared_rows(self, monkeypatch):
         model = host.MenuModel((_live_menu("huginn", "Approve"),))
@@ -205,13 +192,6 @@ class TestActivation:
         _tray()._host_action("help")
         assert opened == ["http://127.0.0.1:1/"]
 
-    def test_choosing_an_icon_persists_it(self, monkeypatch):
-        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: host.MenuModel())
-        monkeypatch.setattr(windows_tray, "_tray_image", lambda: object())
-        instance = _tray()
-        instance._icon = MagicMock()
-        instance._host_action(f"icon:{icons.DEFAULT_ICON}")
-        assert icons.configured_icon() == icons.DEFAULT_ICON
 
     def test_an_unloadable_icon_does_not_break_the_tray(self, monkeypatch):
         """A bad image must not take the menu down; the old bitmap stays."""

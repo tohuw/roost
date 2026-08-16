@@ -22,7 +22,6 @@ import sys
 from pathlib import Path
 
 from roost import help_server
-from roost import icons
 from roost import paths
 from roost import ravens
 from roost import sanitize
@@ -81,39 +80,6 @@ def cmd_ravens(args: argparse.Namespace) -> int:
         else:
             print(f"  ○ {display} ({name})")
             print(f"      {sanitize.safe_for_log(raven.reason, 200)}")
-    return 0
-
-
-# ── icon ──────────────────────────────────────────────────────────────────────
-
-def cmd_icon(args: argparse.Namespace) -> int:
-    if args.icon_action == "list":
-        active = icons.resolve()
-        for choice in icons.choices():
-            marker = "*" if icons.is_active(choice, active) else " "
-            print(f" {marker} {choice.label}")
-        return 0
-
-    if args.icon_action == "reset":
-        icons.clear_icon()
-        print(f"Tray icon reset to {icons.DEFAULT_ICON}.")
-        return 0
-
-    # set
-    choice = icons.resolve(args.value)
-    if choice is None or (
-        args.value
-        and choice.name != args.value
-        and str(choice.path) != args.value
-    ):
-        print(
-            f"Error: {args.value!r} is not a built-in icon name or a usable "
-            "PNG/ICO path.",
-            file=sys.stderr,
-        )
-        return 1
-    icons.set_icon(args.value)
-    print(f"Tray icon set to {choice.label}. Restart the tray to apply it.")
     return 0
 
 
@@ -391,13 +357,6 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("ui", help="Start the menu bar or system tray")
     sub.add_parser("ravens", help="Show what the tray sees, and why")
 
-    p_icon = sub.add_parser("icon", help="Show, set, or reset the tray icon")
-    icon_sub = p_icon.add_subparsers(dest="icon_action", metavar="ACTION")
-    icon_sub.add_parser("list", help="List the selectable icons")
-    p_icon_set = icon_sub.add_parser("set", help="Choose an icon by name or path")
-    p_icon_set.add_argument("value", help="A built-in name, or an absolute PNG/ICO path")
-    icon_sub.add_parser("reset", help="Revert to the default icon")
-
     return parser
 
 
@@ -406,7 +365,6 @@ COMMANDS = {
     "uninstall": cmd_uninstall,
     "ui": cmd_ui,
     "ravens": cmd_ravens,
-    "icon": cmd_icon,
 }
 
 
@@ -416,8 +374,6 @@ def main() -> None:
     if args.verb is None:
         parser.print_help()
         sys.exit(0)
-    if args.verb == "icon" and getattr(args, "icon_action", None) is None:
-        args.icon_action = "list"
     handler = COMMANDS.get(args.verb)
     if handler is None:
         parser.print_help()

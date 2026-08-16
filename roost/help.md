@@ -26,7 +26,6 @@ Muninn
       · Deployed staging — 12m ago
       · Merged #412 — yesterday
 ────────────────
-Tray icon      ▸
 Help
 ────────────────
 Quit Roost
@@ -46,8 +45,6 @@ raven adds something new, it appears here without Roost needing an update.
   passes the click along.
 - **Greyed-out rows** are headings, or something the raven has marked as not
   currently actionable.
-- **Tray icon** changes the icon in your menu bar. The raven is the default; the
-  optional *Roost* mark is a raven at rest in a nest.
 - **Help** opens this page.
 
 ---
@@ -107,13 +104,13 @@ removing it is how you make a quit stick.
 ## Your data
 
 Roost has no data of its own. It reads status from your ravens over your own
-machine's local connection, and stores nothing but your chosen icon.
+machine's local connection, and stores no preferences at all.
 
 **Nothing leaves your computer.** Roost makes no network requests off your
 machine at all — not for updates, not for analytics, not for anything. Each raven
 keeps its own key, and Roost only ever passes a raven its own.
 
-Roost keeps its own small state — your icon choice, a lock, a log — in one
+Roost keeps its own small state — a lock, a log — in one
 directory of its own:
 
 - **macOS and Linux:** `~/.local/state/roost`

@@ -50,7 +50,6 @@ raven change its own menu with no change to Roost.
       · Deployed staging — 12m ago
       · Merged #412 — yesterday
   ──────────────────
-  Tray icon      ▸
   Help
   ──────────────────
   Quit Roost
@@ -67,8 +66,7 @@ raven change its own menu with no change to Roost.
   with a visible reason** — never as a silent omission and never as a crash
 - Elects exactly one host process by a single exclusive lock, released by the
   kernel if that process dies
-- Lets you pick the tray icon, defaulting to the raven; the optional `roost` mark
-  is a raven at rest in a nest
+- Wears one mark, the raven, so the tray item stays findable
 - Starts after login via launchd on macOS or the Startup folder on Windows
 
 Everything binds to `127.0.0.1`. Roost makes no outbound network requests and
@@ -157,9 +155,6 @@ the tray. It is safe to re-run.
 
 ```
 roost ravens        Show what the tray sees, and why
-roost icon list     List the selectable tray icons
-roost icon set X    Choose a built-in name or an absolute PNG/ICO path
-roost icon reset    Revert to the default
 roost ui            Start the menu bar or system tray
 roost install       First-time setup
 roost uninstall     Remove login startup and CLI integration
@@ -235,7 +230,7 @@ on:
 | Windows mutex | `Local\AppistryWindowsTray` | none (a lock file elects the host) |
 
 **What Roost owns.** Its own state directory and nothing else. That directory
-holds the host lock, the icon preference, the ephemeral help-port file, the tray
+holds the host lock, the ephemeral help-port file, the tray
 log, and on Windows the tray PID file — all 0600 inside a 0700 directory.
 
 **What Roost never touches.** Anything under `~/.appistry`. Not `registry.toml`,
@@ -245,12 +240,11 @@ Roost does not know that directory exists. A test walks this package's AST to
 prove no runtime string names it.
 
 **If you ran an early build of Roost**, its state is still sitting in
-`~/.appistry` and is simply ignored. Nothing is migrated, deliberately — the only
-real setting there is your icon choice, which takes one `roost icon set` to
-restore, and a migration would mean deleting files from inside a live tool's state
-directory to save you that. Two of the filenames were written by both projects
-under the same name, so there is no way to be sure whose they are. Set your icon
-again; delete the orphans by hand if they bother you.
+`~/.appistry` and is simply ignored. Nothing is migrated, deliberately: Roost
+stores no preferences to carry over, and a migration would mean deleting files
+from inside a live tool's state directory. Two of the filenames were written by
+both projects under the same name, so there is no way to be sure whose they are.
+Delete the orphans by hand if they bother you.
 
 Neither project binds a fixed port. Roost's help server asks the kernel for a
 free one and records it owner-only, which is also why no web page can find it.

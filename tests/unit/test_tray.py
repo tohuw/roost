@@ -14,18 +14,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from roost import host
-from roost import icons
 from roost import menu_spec
 from roost import ravens
 from roost import tray
 from roost.tray import RowKind
-
-
-@pytest.fixture(autouse=True)
-def no_user_icon_config(monkeypatch, tmp_path):
-    """Keep the icon submenu deterministic and off the real config."""
-    monkeypatch.setattr(icons.paths, "STATE_DIR", tmp_path)
-    return tmp_path
 
 
 def _descriptor(name="huginn", **overrides):
@@ -221,7 +213,6 @@ class TestStructure:
         ]
         assert "help" in actions
         assert "quit" in actions
-        assert "icon" in actions
 
     def test_the_hosts_own_rows_come_last(self):
         model = host.MenuModel((_menu("huginn", "Row"),))
@@ -244,50 +235,6 @@ class TestStructure:
         assert "Quit All" not in labels
         assert tray.QUIT_LABEL in labels
 
-
-# ── Icon submenu ──────────────────────────────────────────────────────────────
-
-class TestIconSubmenu:
-    def test_the_submenu_lists_the_builtin_icons(self):
-        rows = tray.icon_rows()
-        assert icons.DEFAULT_ICON in [row.value for row in rows]
-
-    def test_exactly_one_icon_is_marked_active(self):
-        rows = tray.icon_rows()
-        assert sum(1 for row in rows if row.active) == 1
-
-    def test_the_default_is_active_without_a_config(self):
-        active = next(row for row in tray.icon_rows() if row.active)
-        assert active.value == icons.DEFAULT_ICON
-
-    def test_choosing_an_icon_moves_the_marker(self):
-        others = [row for row in tray.icon_rows() if not row.active]
-        if not others:
-            pytest.skip("only one icon is shipped")
-        icons.set_icon(others[0].value)
-        active = next(row for row in tray.icon_rows() if row.active)
-        assert active.value == others[0].value
-
-    def test_each_icon_row_carries_its_value_in_the_action(self):
-        row = next(
-            r for r in tray.build_rows(host.MenuModel())
-            if r.kind is RowKind.HOST and r.action == "icon"
-        )
-        assert row.children
-        assert all(child.action.startswith("icon:") for child in row.children)
-
-    def test_the_active_icon_child_row_is_marked_checked(self):
-        """The marker has to be on the row: a tray draws rows, not config."""
-        row = next(
-            r for r in tray.build_rows(host.MenuModel())
-            if r.kind is RowKind.HOST and r.action == "icon"
-        )
-        checked = [child for child in row.children if child.checked]
-        assert len(checked) == 1
-        assert checked[0].action == f"icon:{icons.DEFAULT_ICON}"
-
-
-# ── Signature ─────────────────────────────────────────────────────────────────
 
 class TestSignature:
     def test_an_unchanged_menu_has_an_unchanged_signature(self):
@@ -318,14 +265,6 @@ class TestSignature:
             tray.build_rows(host.MenuModel((_menu("m", reason="Two."),)))
         )
         assert first != second
-
-    def test_a_changed_icon_selection_changes_the_signature(self):
-        before = tray.signature(tray.build_rows(host.MenuModel()))
-        others = [row for row in tray.icon_rows() if not row.active]
-        if not others:
-            pytest.skip("only one icon is shipped")
-        icons.set_icon(others[0].value)
-        assert tray.signature(tray.build_rows(host.MenuModel())) != before
 
     def test_becoming_unavailable_changes_the_signature(self):
         up = tray.signature(tray.build_rows(host.MenuModel((_menu("huginn", "A"),))))
