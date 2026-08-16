@@ -17,7 +17,9 @@ import ctypes
 import logging
 import ntpath
 import os
+import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -125,20 +127,100 @@ def _base_interpreter(repo_dir: Path) -> Path | None:
     return None
 
 
-def _strip_version_resource(path: Path) -> bool:
-    """Remove RT_VERSION from a PE, leaving every other resource alone.
+#: Language and codepage the version resource is written under: neutral, with
+#: the Unicode codepage. Exactly what CPython's own interpreters ship, which is
+#: the arrangement the shell is already known to read correctly here.
+_VERSION_LANG, _VERSION_CODEPAGE = 0x0000, 0x04B0
 
-    Only the version resource: ``bDeleteExistingResources=False``, so the
-    application manifest survives -- that is what carries the DPI awareness and
-    UAC settings the interpreter needs, and dropping it would change how the
-    tray runs in order to fix what it is called.
+#: The name the shell shows. Not "Roost.exe" -- with no version resource at all
+#: the shell falls back to the filename *including its extension*, which is what
+#: Taskbar settings displayed while this stripped the resource instead of
+#: replacing it.
+BRANDED_DESCRIPTION = "Roost"
 
-    One Begin/End cycle *per language*, stopping at the first that works.
-    Measured on Windows 11: deleting under ``0x0409`` succeeds, deleting under
-    the neutral ``0x0000`` fails with ERROR_INVALID_PARAMETER -- and a failed
-    UpdateResource poisons the handle, so ``EndUpdateResource`` then discards a
-    delete that had already succeeded. Batching the two attempts silently
-    produced no change at all.
+
+def _pad4(data: bytes) -> bytes:
+    return data + b"\x00" * (-len(data) % 4)
+
+
+def _version_block(key: str, value: bytes = b"", *, wtype: int = 1,
+                   value_words: int = 0, children: bytes = b"") -> bytes:
+    """One node of a VS_VERSIONINFO tree, length-prefixed and 32-bit aligned.
+
+    The two-byte ``wLength`` placeholder is part of ``body`` from the start so
+    every alignment offset is measured from the structure's own beginning, which
+    is what the format specifies. Computing padding without it is the easy way
+    to produce a blob that parses on one machine and not the next.
+    """
+    body = struct.pack("<HHH", 0, value_words, wtype)
+    body += key.encode("utf-16-le") + b"\x00\x00"
+    body = _pad4(body)
+    body += value
+    if children:
+        body = _pad4(body)
+        body += children
+    return struct.pack("<H", len(body)) + body[2:]
+
+
+def _version_string(name: str, text: str) -> bytes:
+    encoded = text.encode("utf-16-le") + b"\x00\x00"
+    # For a text value wValueLength counts characters, not bytes.
+    return _pad4(_version_block(name, encoded, wtype=1, value_words=len(text) + 1))
+
+
+def _version_resource(description: str, version: str) -> bytes:
+    """Build a VS_VERSIONINFO saying this executable is called ``description``."""
+    parts = [int(p) for p in re.findall(r"\d+", version)[:4]]
+    parts += [0] * (4 - len(parts))
+    high = (parts[0] << 16) | parts[1]
+    low = (parts[2] << 16) | parts[3]
+    fixed = struct.pack(
+        "<LLLLLLLLLLLLL",
+        0xFEEF04BD,   # dwSignature
+        0x00010000,   # dwStrucVersion
+        high, low,    # dwFileVersionMS / LS
+        high, low,    # dwProductVersionMS / LS
+        0x3F, 0,      # dwFileFlagsMask, dwFileFlags
+        0x00000004,   # dwFileOS   = VOS__WINDOWS32
+        0x00000001,   # dwFileType = VFT_APP
+        0,            # dwFileSubtype
+        0, 0,         # dwFileDateMS / LS
+    )
+    fields = {
+        "CompanyName": description,
+        "FileDescription": description,   # the one the shell actually shows
+        "FileVersion": version,
+        "InternalName": description,
+        "OriginalFilename": BRANDED_LAUNCHER,
+        "ProductName": description,
+        "ProductVersion": version,
+    }
+    strings = b"".join(_version_string(k, v) for k, v in fields.items())
+    table = _pad4(_version_block(
+        f"{_VERSION_LANG:04x}{_VERSION_CODEPAGE:04x}", children=strings))
+    string_info = _pad4(_version_block("StringFileInfo", children=table))
+    translation = _pad4(_version_block(
+        "Translation", struct.pack("<HH", _VERSION_LANG, _VERSION_CODEPAGE),
+        wtype=0, value_words=4))
+    var_info = _pad4(_version_block("VarFileInfo", children=translation))
+    return _version_block("VS_VERSION_INFO", fixed, wtype=0,
+                          value_words=len(fixed),
+                          children=string_info + var_info)
+
+
+def _write_version_resource(path: Path, description: str, version: str) -> bool:
+    """Give a PE a version resource naming it ``description``.
+
+    Replaces RT_VERSION rather than deleting it. Deleting was the first attempt
+    and it half-worked: with no version resource the shell falls back to the
+    *filename*, so Taskbar settings read "Roost.exe" instead of "Roost". The
+    fallback is the shell's, so the only way to drop the extension is to stop
+    relying on the fallback and say the name outright.
+
+    ``bDeleteExistingResources=False``, so the application manifest survives --
+    it carries the DPI awareness and UAC settings the interpreter needs, and
+    dropping it would change how the tray runs in order to fix what it is
+    called.
     """
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.BeginUpdateResourceW.restype = wintypes.HANDLE
@@ -153,26 +235,53 @@ def _strip_version_resource(path: Path) -> bool:
 
     rt_version = ctypes.cast(ctypes.c_void_p(16), wintypes.LPCWSTR)
     first_entry = ctypes.cast(ctypes.c_void_p(1), wintypes.LPCWSTR)
+    blob = _version_resource(description, version)
 
-    for language in (0x0409, 0x0000):
-        handle = kernel32.BeginUpdateResourceW(str(path), False)
-        if not handle:
-            return False
-        deleted = kernel32.UpdateResourceW(
-            handle, rt_version, first_entry, language, None, 0)
-        committed = kernel32.EndUpdateResourceW(handle, not deleted)
-        if deleted and committed and not _has_version_resource(path):
-            return True
-    return False
+    handle = kernel32.BeginUpdateResourceW(str(path), False)
+    if not handle:
+        return False
+    written = kernel32.UpdateResourceW(
+        handle, rt_version, first_entry, _VERSION_LANG, blob, len(blob))
+    committed = kernel32.EndUpdateResourceW(handle, not written)
+    return bool(written and committed and file_description(path) == description)
 
 
-def _has_version_resource(path: Path) -> bool:
-    """Does this PE still carry version info? Zero bytes means the shell falls
-    back to the filename, which is the whole point of stripping it."""
+def file_description(path: Path) -> str | None:
+    """What the shell will call this executable, or None if it carries no name."""
     version = ctypes.WinDLL("version", use_last_error=True)
     version.GetFileVersionInfoSizeW.argtypes = [
         wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
-    return bool(version.GetFileVersionInfoSizeW(str(path), None))
+    version.GetFileVersionInfoW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID]
+    version.VerQueryValueW.argtypes = [
+        wintypes.LPVOID, wintypes.LPCWSTR,
+        ctypes.POINTER(wintypes.LPVOID), ctypes.POINTER(wintypes.UINT)]
+
+    size = version.GetFileVersionInfoSizeW(str(path), None)
+    if not size:
+        return None
+    buffer = ctypes.create_string_buffer(size)
+    if not version.GetFileVersionInfoW(str(path), 0, size, buffer):
+        return None
+    value, length = wintypes.LPVOID(), wintypes.UINT()
+    block = f"\\StringFileInfo\\{_VERSION_LANG:04x}{_VERSION_CODEPAGE:04x}\\FileDescription"
+    if version.VerQueryValueW(buffer, block, ctypes.byref(value),
+                              ctypes.byref(length)) and length.value:
+        return ctypes.wstring_at(value.value, length.value - 1)
+    return None
+
+
+def _repo_version(repo_dir: Path) -> str:
+    """Roost's version, from the same VERSION file pyproject reads.
+
+    Only fills in FileVersion and ProductVersion, which nothing in the tray
+    surfaces -- FileDescription is the field that shows. So an unreadable
+    VERSION file is a cosmetic loss, not a reason to leave the launcher unnamed.
+    """
+    try:
+        return (repo_dir / "VERSION").read_text(encoding="utf-8").strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
 
 
 def branded_launcher(repo_dir: Path) -> Path | None:
@@ -194,16 +303,27 @@ def branded_launcher(repo_dir: Path) -> Path | None:
         return None
     target = repo_dir / ".venv" / "Scripts" / BRANDED_LAUNCHER
     try:
-        # Rebuilt when the interpreter has been upgraded underneath us.
-        if target.exists() and target.stat().st_mtime >= source.stat().st_mtime:
+        # Restaged when the interpreter has been upgraded underneath us, and
+        # when an existing copy is not named yet -- the first version of this
+        # stripped the resource instead of writing one, and those copies are on
+        # disk already, showing "Roost.exe".
+        fresh = target.exists() and target.stat().st_mtime >= source.stat().st_mtime
+        if fresh and file_description(target) == BRANDED_DESCRIPTION:
             return target
         shutil.copy2(source, target)
     except OSError:
+        # Windows holds an executable's image open while it runs, so restaging
+        # fails outright whenever a tray is already up -- which is exactly when
+        # this runs, since starting a second tray is what asks for the path.
+        # An existing copy is still a working interpreter, merely misnamed until
+        # the next start, and that beats falling back to pythonw.exe and being
+        # called "Python" again.
         log.debug("Could not stage the branded launcher", exc_info=True)
-        return None
-    if not _strip_version_resource(target):
+        return target if target.exists() else None
+    if not _write_version_resource(target, BRANDED_DESCRIPTION,
+                                   _repo_version(repo_dir)):
         # It still runs; it just says "Python" again. Better than not starting.
-        log.debug("Could not strip the version resource from %s", target)
+        log.debug("Could not name the version resource on %s", target)
     return target
 
 

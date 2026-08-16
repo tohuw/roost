@@ -110,6 +110,43 @@ class TestLauncherSelection:
             assert windows_support.branded_launcher(tmp_path) is None
 
 
+class TestTheVersionBlob:
+    """The binary shape, checked without needing Windows to parse it.
+
+    VS_VERSIONINFO is length-prefixed and 32-bit aligned throughout, and the
+    alignment is measured from each structure's own start — including the
+    two-byte length field. Get that wrong and the blob still writes, still
+    reads back as *some* size, and the shell quietly declines to show a name.
+    """
+
+    def test_every_node_is_four_byte_aligned(self):
+        blob = windows_support._version_resource("Roost", "2026.8.4")
+        assert len(blob) % 4 == 0
+
+    def test_the_root_declares_its_own_length(self):
+        import struct
+
+        blob = windows_support._version_resource("Roost", "2026.8.4")
+        # wLength excludes any padding the caller adds after it, so it is the
+        # blob's own length here.
+        assert struct.unpack("<H", blob[:2])[0] == len(blob)
+
+    def test_it_is_a_version_resource_at_all(self):
+        blob = windows_support._version_resource("Roost", "2026.8.4")
+        assert b"V\x00S\x00_\x00V\x00E\x00R\x00S\x00I\x00O\x00N" in blob
+        assert b"\xbd\x04\xef\xfe" in blob        # the VS_FIXEDFILEINFO signature
+
+    def test_the_description_is_the_one_asked_for(self):
+        blob = windows_support._version_resource("Roost", "2026.8.4")
+        assert "FileDescription".encode("utf-16-le") in blob
+        assert "Roost".encode("utf-16-le") in blob
+
+    def test_a_version_with_too_few_parts_is_padded_not_refused(self):
+        """VERSION is CalVer with three parts; the fixed header wants four."""
+        assert windows_support._version_resource("Roost", "2026.8")
+        assert windows_support._version_resource("Roost", "")
+
+
 def _repo_has_a_venv() -> bool:
     """Is this checkout laid out as a venv install?
 
@@ -127,20 +164,46 @@ def _repo_has_a_venv() -> bool:
 @pytest.mark.skipif(sys.platform != "win32", reason="PE resources are Windows-only")
 @pytest.mark.skipif(not _repo_has_a_venv(), reason="no .venv in this checkout to brand")
 class TestOnWindows:
-    def test_the_copy_carries_no_version_info(self, tmp_path):
-        """No version resource means the shell shows the filename: "Roost"."""
+    def test_a_staged_copy_says_its_name_outright(self, tmp_path):
+        """Named, not merely unnamed — the actual PE surgery.
+
+        Stripping the resource was the first attempt and it left the shell to
+        fall back to the filename, which includes the extension: Taskbar
+        settings read "Roost.exe". The only way to drop that is to stop relying
+        on the fallback and write the name.
+
+        Done on the test's own copy rather than the repo's launcher, because
+        Windows holds a running executable's image open — a developer with the
+        tray up would otherwise fail this for a reason that is not about the
+        code.
+        """
+        import shutil
+
+        repo = Path(__file__).resolve().parents[2]
+        source = windows_support._base_interpreter(repo)
+        assert source is not None
+        copy = tmp_path / windows_support.BRANDED_LAUNCHER
+        shutil.copy2(source, copy)
+        assert windows_support.file_description(copy) == "Python"
+
+        assert windows_support._write_version_resource(copy, "Roost", "2026.8.5")
+        assert windows_support.file_description(copy) == "Roost"
+        assert windows_support.file_description(copy) != "Roost.exe"
+
+    def test_the_launcher_is_named_once_it_can_be_staged(self, tmp_path):
         repo = Path(__file__).resolve().parents[2]
         launcher = windows_support.branded_launcher(repo)
         assert launcher is not None
         assert launcher.name == windows_support.BRANDED_LAUNCHER
-        assert windows_support._has_version_resource(launcher) is False
+        if windows_support.file_description(launcher) != "Roost":
+            pytest.skip("a running tray is holding the launcher open")
 
-    def test_the_interpreter_it_copied_still_has_its_own(self, tmp_path):
-        """The strip must touch the copy, never the installed interpreter."""
+    def test_the_interpreter_it_copied_is_left_alone(self, tmp_path):
+        """The rewrite must touch the copy, never the installed interpreter."""
         repo = Path(__file__).resolve().parents[2]
         source = windows_support._base_interpreter(repo)
         assert source is not None
-        assert windows_support._has_version_resource(source) is True
+        assert windows_support.file_description(source) == "Python"
 
     def test_it_is_not_restaged_every_call(self, tmp_path):
         repo = Path(__file__).resolve().parents[2]
