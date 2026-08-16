@@ -79,7 +79,22 @@ class TestLauncherSelection:
             assert windows_support.branded_launcher(tmp_path) is None
 
 
+def _repo_has_a_venv() -> bool:
+    """Is this checkout laid out as a venv install?
+
+    Branding stages a copy of the venv's *base* interpreter, which it finds
+    through ``.venv/pyvenv.cfg``. CI installs into the system Python with no
+    venv at all, so there is nothing to copy and ``branded_launcher`` correctly
+    returns None -- a fact about the checkout rather than a regression. The
+    class above already covers the selection logic on every platform; this is
+    only the real PE surgery.
+    """
+    return windows_support._base_interpreter(
+        Path(__file__).resolve().parents[2]) is not None
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="PE resources are Windows-only")
+@pytest.mark.skipif(not _repo_has_a_venv(), reason="no .venv in this checkout to brand")
 class TestOnWindows:
     def test_the_copy_carries_no_version_info(self, tmp_path):
         """No version resource means the shell shows the filename: "Roost"."""
