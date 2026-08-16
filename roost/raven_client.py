@@ -204,8 +204,23 @@ def _request(
     except urllib.error.HTTPError as exc:
         # Read and discard: leaving the body unread on an error response keeps
         # the connection in an indeterminate state.
+        #
+        # Bounded, like the success path above and for the same reason. A bare
+        # ``exc.read()`` reads until EOF, so a raven answering 500 with an
+        # enormous body would be pulled into the tray's memory in full -- the one
+        # read in this module that the cap did not cover. The descriptor
+        # directory is writable by anything running as this user, which is the
+        # threat model SPEC.md reasons about everywhere else, so "a raven would
+        # not do that" is not an assumption available here. Draining is only to
+        # settle the connection; the content is never looked at, so a partial
+        # drain is as good as a whole one.
         try:
-            exc.read()
+            drained = 0
+            while drained < MAX_RESPONSE_BYTES:
+                chunk = exc.read(_READ_CHUNK)
+                if not chunk:
+                    break
+                drained += len(chunk)
         except Exception:
             pass
         if exc.code in (401, 403):

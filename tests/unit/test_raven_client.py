@@ -12,7 +12,9 @@ import socketserver
 import sys
 import threading
 import time
+import urllib.error
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -314,6 +316,44 @@ class TestBoundedRequests:
                 raven_client.fetch_menu(_descriptor(server.port, tmp_path))
         finally:
             server.close()
+
+    def test_an_oversized_error_body_is_not_read_whole(self, tmp_path):
+        """The one read in this module the cap did not cover.
+
+        Every read on the success path is bounded, and the error path called a
+        bare ``exc.read()`` -- which reads to EOF. A raven answering 500 with an
+        enormous body would therefore be pulled into the tray's memory in full,
+        by the error handler rather than the parser. The descriptor directory is
+        writable by anything running as this user, so a raven behaving badly is
+        inside the threat model rather than outside it.
+
+        Asserted on how much was read rather than on elapsed time, which would
+        be a machine-speed test dressed up as a correctness one.
+        """
+        oversized = b"x" * (raven_client.MAX_RESPONSE_BYTES * 4)
+        read_sizes: list[int | None] = []
+
+        class _HugeError(urllib.error.HTTPError):
+            def __init__(self):
+                super().__init__("http://127.0.0.1/x", 500, "boom", {}, None)
+                self._left = oversized
+
+            def read(self, amt=None):
+                read_sizes.append(amt)
+                if amt is None:          # the unbounded call this test forbids
+                    chunk, self._left = self._left, b""
+                    return chunk
+                chunk, self._left = self._left[:amt], self._left[amt:]
+                return chunk
+
+        with patch.object(raven_client._OPENER, "open", side_effect=_HugeError()):
+            with pytest.raises(raven_client.RavenRequestError):
+                raven_client.fetch_menu(_descriptor(47100, tmp_path))
+
+        assert read_sizes, "the error body must still be drained"
+        assert None not in read_sizes, "drained with an unbounded read()"
+        assert sum(s for s in read_sizes if s) <= (
+            raven_client.MAX_RESPONSE_BYTES + raven_client._READ_CHUNK)
 
     def test_negative_content_length_is_refused(self, tmp_path):
         server = _Raven(content_length=-1)
