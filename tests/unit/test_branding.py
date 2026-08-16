@@ -205,6 +205,66 @@ def _repo_has_a_venv() -> bool:
         Path(__file__).resolve().parents[2]) is not None
 
 
+class TestTheStagedCopyTracksTheRelease:
+    """The copy is stamped with Roost's version, so a release has to restage it.
+
+    The freshness check compared the copy's mtime against the *interpreter*,
+    which a Roost release never touches. So the first staging won permanently:
+    every later version reused a copy stamped with whichever release happened to
+    create it, and `RoostTray.exe` sat at 2026.8.6 while the package was 2026.8.7.
+
+    Invisible by construction. Nothing reads FileVersion — the shell shows
+    FileDescription, which was correct the whole time — so the only symptom was
+    a number in the file's properties dialog that nobody had reason to open.
+    """
+
+    def _stage(self, tmp_path, *, stamped, current, description="Roost"):
+        """Run ``branded_launcher`` over a fake checkout; report what happened.
+
+        The copy and the interpreter hold different bytes, so whether a restage
+        occurred is readable from the target rather than inferred from a mock.
+        """
+        scripts = tmp_path / ".venv" / "Scripts"
+        scripts.mkdir(parents=True)
+        source = tmp_path / "base" / "pythonw.exe"
+        source.parent.mkdir()
+        source.write_bytes(b"interpreter")
+        target = scripts / windows_support.BRANDED_LAUNCHER
+        target.write_bytes(b"already-staged")
+
+        with patch.object(windows_support, "is_windows", return_value=True), \
+             patch.object(windows_support, "_base_interpreter", return_value=source), \
+             patch.object(windows_support, "_repo_version", return_value=current), \
+             patch.object(windows_support, "file_description", return_value=description), \
+             patch.object(windows_support, "file_version", return_value=stamped), \
+             patch.object(windows_support, "_write_version_resource",
+                          return_value=True) as stamp:
+            result = windows_support.branded_launcher(tmp_path)
+        return result, target.read_bytes(), stamp
+
+    def test_a_release_since_the_copy_was_stamped_restages_it(self, tmp_path):
+        _, content, stamp = self._stage(tmp_path, stamped="2026.8.6", current="2026.8.7")
+        assert content == b"interpreter"
+        assert stamp.call_args.args[2] == "2026.8.7"
+
+    def test_an_up_to_date_copy_is_left_alone(self, tmp_path):
+        """Restaging on every call would fail whenever the tray is running."""
+        _, content, stamp = self._stage(tmp_path, stamped="2026.8.7", current="2026.8.7")
+        assert content == b"already-staged"
+        stamp.assert_not_called()
+
+    def test_an_unstamped_copy_is_restaged(self, tmp_path):
+        """A copy from before the resource was written at all reads None."""
+        _, content, _ = self._stage(tmp_path, stamped=None, current="2026.8.7")
+        assert content == b"interpreter"
+
+    def test_a_wrong_name_still_restages(self, tmp_path):
+        """The description check that already existed keeps working."""
+        _, content, _ = self._stage(tmp_path, stamped="2026.8.7", current="2026.8.7",
+                                    description="Python")
+        assert content == b"interpreter"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="PE resources are Windows-only")
 @pytest.mark.skipif(not _repo_has_a_venv(), reason="no .venv in this checkout to brand")
 class TestOnWindows:
@@ -233,6 +293,23 @@ class TestOnWindows:
         assert windows_support._write_version_resource(copy, "Roost", "2026.8.5")
         assert windows_support.file_description(copy) == "Roost"
         assert windows_support.file_description(copy) != "Roost.exe"
+
+    def test_the_stamped_version_reads_back(self, tmp_path):
+        """The freshness check is only as good as this round-trip.
+
+        If ``file_version`` returned None for a stamped copy, the check would
+        restage on every call and fail whenever a tray held the image open.
+        """
+        import shutil
+
+        repo = Path(__file__).resolve().parents[2]
+        source = windows_support._base_interpreter(repo)
+        assert source is not None
+        copy = tmp_path / windows_support.BRANDED_LAUNCHER
+        shutil.copy2(source, copy)
+
+        assert windows_support._write_version_resource(copy, "Roost", "2026.8.8")
+        assert windows_support.file_version(copy) == "2026.8.8"
 
     def test_the_launcher_is_named_once_it_can_be_staged(self, tmp_path):
         repo = Path(__file__).resolve().parents[2]

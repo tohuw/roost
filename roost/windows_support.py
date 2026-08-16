@@ -259,8 +259,8 @@ def _write_version_resource(path: Path, description: str, version: str) -> bool:
     return bool(written and committed and file_description(path) == description)
 
 
-def file_description(path: Path) -> str | None:
-    """What the shell will call this executable, or None if it carries no name."""
+def _string_file_info(path: Path, field: str) -> str | None:
+    """One ``StringFileInfo`` field from a PE's version resource, or None."""
     version = ctypes.WinDLL("version", use_last_error=True)
     version.GetFileVersionInfoSizeW.argtypes = [
         wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
@@ -277,11 +277,26 @@ def file_description(path: Path) -> str | None:
     if not version.GetFileVersionInfoW(str(path), 0, size, buffer):
         return None
     value, length = wintypes.LPVOID(), wintypes.UINT()
-    block = f"\\StringFileInfo\\{_VERSION_LANG:04x}{_VERSION_CODEPAGE:04x}\\FileDescription"
+    block = f"\\StringFileInfo\\{_VERSION_LANG:04x}{_VERSION_CODEPAGE:04x}\\{field}"
     if version.VerQueryValueW(buffer, block, ctypes.byref(value),
                               ctypes.byref(length)) and length.value:
         return ctypes.wstring_at(value.value, length.value - 1)
     return None
+
+
+def file_description(path: Path) -> str | None:
+    """What the shell will call this executable, or None if it carries no name."""
+    return _string_file_info(path, "FileDescription")
+
+
+def file_version(path: Path) -> str | None:
+    """The version string the copy was stamped with, or None if unstamped.
+
+    Read only to decide whether a staged copy is current. Nothing surfaces this
+    to a user the way ``FileDescription`` is surfaced -- which is precisely why
+    it went stale unnoticed.
+    """
+    return _string_file_info(path, "FileVersion")
 
 
 def _repo_version(repo_dir: Path) -> str:
@@ -323,13 +338,24 @@ def branded_launcher(repo_dir: Path) -> Path | None:
     if source is None:
         return None
     target = repo_dir / ".venv" / "Scripts" / BRANDED_LAUNCHER
+    version = _repo_version(repo_dir)
     try:
-        # Restaged when the interpreter has been upgraded underneath us, and
-        # when an existing copy is not named yet -- the first version of this
-        # stripped the resource instead of writing one, and those copies are on
-        # disk already, showing "Roost.exe".
-        fresh = target.exists() and target.stat().st_mtime >= source.stat().st_mtime
-        if fresh and file_description(target) == BRANDED_DESCRIPTION:
+        # Restaged when the interpreter has been upgraded underneath us, when an
+        # existing copy is not named yet -- the first version of this stripped
+        # the resource instead of writing one, and those copies are on disk
+        # already, showing "Roost.exe" -- and when Roost itself has been
+        # released since the copy was stamped.
+        #
+        # That last clause is the one whose absence was invisible. The mtime
+        # compares the copy against the *interpreter*, which a Roost release
+        # does not touch, so a copy staged once stayed "fresh" across every
+        # subsequent version and kept reporting whichever one first staged it.
+        # Nothing surfaces FileVersion, so nothing complained.
+        fresh = (target.exists()
+                 and target.stat().st_mtime >= source.stat().st_mtime
+                 and file_description(target) == BRANDED_DESCRIPTION
+                 and file_version(target) == version)
+        if fresh:
             return target
         shutil.copy2(source, target)
     except OSError:
@@ -341,8 +367,7 @@ def branded_launcher(repo_dir: Path) -> Path | None:
         # called "Python" again.
         log.debug("Could not stage the branded launcher", exc_info=True)
         return target if target.exists() else None
-    if not _write_version_resource(target, BRANDED_DESCRIPTION,
-                                   _repo_version(repo_dir)):
+    if not _write_version_resource(target, BRANDED_DESCRIPTION, version):
         # It still runs; it just says "Python" again. Better than not starting.
         log.debug("Could not name the version resource on %s", target)
     return target
