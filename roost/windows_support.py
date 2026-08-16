@@ -347,16 +347,58 @@ def refresh_user_environment() -> None:
 
 # ── Tray process ──────────────────────────────────────────────────────────────
 
-def tray_is_running() -> bool:
-    """Return True if a tray process is answering on its recorded help port.
+def _running_tray_pid() -> int | None:
+    """The tray's PID, if that PID is alive and really is the tray.
 
-    The port file alone proves nothing — a crashed tray leaves it behind — so the
-    endpoint is actually probed, and the reply must identify Roost rather than
-    whatever unrelated service inherited the port.
+    A pure query, which is why this does not share :func:`stop_tray`'s copy of
+    the same verification: that one prunes the PID file and refuses outright
+    when it cannot verify, because it is about to *signal* something. Here the
+    only question is whether a tray exists.
+
+    PID reuse is covered the same way it is there — by checking the command
+    line rather than trusting the number — and psutil raising for a dead PID is
+    what makes the file's staleness detectable at all.
+    """
+    try:
+        pid = int(tray_pid_path().read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    try:
+        import psutil
+    except ImportError:
+        return None
+    try:
+        proc = psutil.Process(pid)
+        command = [ntpath.basename(part).casefold() for part in proc.cmdline()]
+    except Exception:  # psutil.Error and the OS errors it wraps
+        return None
+    return pid if TRAY_MODULE in command else None
+
+
+def tray_is_running() -> bool:
+    """Return True if a Roost tray process exists.
+
+    **The help endpoint cannot be the only answer.** ``help_server`` is started
+    lazily, by the Help menu item, so a freshly started tray has no port at all
+    and probing one always failed. ``start_tray`` waits on this, so it concluded
+    the tray had not started and terminated the perfectly healthy process it had
+    just launched — ``roost install`` and ``roost ui`` reported "failed to
+    start" every time, with an empty log, because nothing had actually crashed.
+
+    So a verified live tray process is the primary answer, and the endpoint
+    probe stays as a second opinion for the case the PID file is missing but a
+    tray is up (an older tray, or a lost state file). The port file alone still
+    proves nothing — a crashed tray leaves it behind — so when it is used the
+    reply must identify Roost rather than whatever inherited the port.
     """
     import json
     import urllib.error
     import urllib.request
+
+    if _running_tray_pid() is not None:
+        return True
 
     port = help_server.active_port()
     if port is None:

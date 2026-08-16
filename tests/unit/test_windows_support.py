@@ -227,6 +227,52 @@ class TestTrayIsRunning:
         monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: Response())
         assert windows_support.tray_is_running() is False
 
+    def test_a_live_tray_process_counts_without_any_help_port(self, monkeypatch):
+        """The regression: the help server is lazy, so there is no port to probe.
+
+        ``help_server`` only starts when the Help item is clicked, so a freshly
+        started tray never answers. ``start_tray`` waited on this and then
+        terminated the healthy process it had just launched, which is why
+        ``roost install`` reported a failure with an empty log.
+        """
+        windows_support.tray_pid_path().parent.mkdir(parents=True, exist_ok=True)
+        windows_support.tray_pid_path().write_text("4321", encoding="utf-8")
+
+        process = MagicMock()
+        process.cmdline.return_value = [
+            r"C:\roost\.venv\Scripts\pythonw.exe", "-m", windows_support.TRAY_MODULE,
+        ]
+        monkeypatch.setitem(
+            sys.modules, "psutil",
+            MagicMock(Process=MagicMock(return_value=process)),
+        )
+        # No port file at all -- the endpoint cannot be what answers here.
+        assert help_server.active_port() is None
+        assert windows_support.tray_is_running() is True
+
+    def test_a_pid_belonging_to_something_else_is_not_the_tray(self, monkeypatch):
+        """A recycled PID must not read as a running tray."""
+        windows_support.tray_pid_path().parent.mkdir(parents=True, exist_ok=True)
+        windows_support.tray_pid_path().write_text("4321", encoding="utf-8")
+
+        process = MagicMock()
+        process.cmdline.return_value = [r"C:\Windows\notepad.exe"]
+        monkeypatch.setitem(
+            sys.modules, "psutil",
+            MagicMock(Process=MagicMock(return_value=process)),
+        )
+        assert windows_support.tray_is_running() is False
+
+    def test_a_dead_pid_in_the_file_is_not_a_running_tray(self, monkeypatch):
+        windows_support.tray_pid_path().parent.mkdir(parents=True, exist_ok=True)
+        windows_support.tray_pid_path().write_text("4321", encoding="utf-8")
+
+        monkeypatch.setitem(
+            sys.modules, "psutil",
+            MagicMock(Process=MagicMock(side_effect=OSError("no such process"))),
+        )
+        assert windows_support.tray_is_running() is False
+
     def test_the_roost_status_payload_means_running(self, monkeypatch):
         help_server.port_file_path().parent.mkdir(parents=True, exist_ok=True)
         help_server.port_file_path().write_text("54321", encoding="utf-8")
