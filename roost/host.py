@@ -22,6 +22,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from roost import launcher
 from roost import menu_spec
 from roost import paths
 from roost import raven_client
@@ -222,6 +223,19 @@ class MenuModel:
     @property
     def any_available(self) -> bool:
         return any(menu.available for menu in self.menus)
+
+    def launch_spec(self, name: str) -> "launcher.LaunchSpec | None":
+        """The launch spec for a raven by name, if it published one.
+
+        Resolved from the model the menu was drawn from, not re-read from disk:
+        the row exists because *this* model said it could be started, and
+        re-reading between draw and click is how a click acts on something the
+        user never saw.
+        """
+        for menu in self.menus:
+            if menu.name == name:
+                return menu.launch
+        return None
 
     @property
     def badge_total(self) -> int:

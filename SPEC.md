@@ -107,7 +107,8 @@ Two details are easy to get wrong:
   "endpoints": {
     "menu": "/api/menu",
     "action": "/api/menu/action"
-  }
+  },
+  "launch": { "kind": "launchd", "id": "is.tohuw.huginn" }
 }
 ```
 
@@ -125,10 +126,37 @@ Two details are easy to get wrong:
 | `token_path` | no | string | Absolute path to your token file. Omit if you accept unauthenticated requests. |
 | `token_header` | no | string | Header your token is presented in. A valid RFC 7230 token, ≤64 chars. Defaults to `X-{Name}-Token`. |
 | `endpoints` | no | object | Path map. ≤12 entries; keys `[a-z][a-z0-9_]{0,31}`. |
+| `launch` | no | object | How the host may ask this machine's supervisor to start you again. See below. |
 
 Recognised endpoint keys are `menu` (default `/api/menu`) and `action` (default
 `/api/menu/action`). Unknown keys are accepted and ignored, so a future version
 can add one without breaking an older host.
+
+#### `launch`, and why it is an identifier
+
+Publish `launch` and a host may offer to start you when your process is gone.
+Omit it and it will not — which is the whole of the difference, and is why a
+raven that predates this field keeps working unchanged.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `kind` | string | One of `launchd`, `systemd`, `windows-run`. |
+| `id` | string | The service identifier: a launchd label, a systemd **user** unit name, or an `HKCU\…\Run` value name. `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`. |
+
+**It names an identifier and never a command, and a host must never accept one
+that does.** The descriptor directory is writable by anything running as this
+user, and the host is a single process shared across every raven — so a
+descriptor that named a program to execute would be a write-then-execute path
+into the host. The host hands `id` to the platform's own supervisor and lets it
+decide what to run. The command lives in the plist, the unit, or the `Run` key,
+put there by an `install-agent` the user ran deliberately; the worst a forged
+descriptor achieves is starting a service that is already installed.
+
+A host must also ignore a `launch` whose `kind` is not this machine's supervisor
+— a descriptor copied between machines can name `launchd` on Linux, and a row
+that cannot work is worse than no row. Publishing `launch` is not a claim that
+anything is installed: the supervisor answers "no such service" and the host
+reports that.
 
 ### Constraints the host enforces
 

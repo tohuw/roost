@@ -256,20 +256,33 @@ class TestRoostStartsNothing:
         host.activate(menu, menu.spec.sections[0].items[0])
 
     def test_no_descriptor_field_is_treated_as_something_to_execute(self, tmp_path):
-        """A descriptor names a port and a token path — never a command.
+        """A descriptor names a port, a token path, and a service id — never a command.
 
-        The rejected design in SPEC.md §10 was a registration file naming an
-        interpreter, so this pins that the validated descriptor has no field that
-        could carry one. Huginn's ``daemon.json`` needed 0600 plus an ownership
-        check plus a group/world-writable check on every parent before its
-        ``python`` field was safe to execute; the parsed type here simply has
-        nowhere to put such a value.
+        The rejected design in SPEC.md was a registration file naming an
+        interpreter. ``launch`` is deliberately not that: it carries a
+        supervisor identifier that the OS resolves to a command out of its own
+        store, so the parsed type still has nowhere to put a program.
         """
         fields = set(ravens.RavenDescriptor.__dataclass_fields__)
 
         for executable_ish in ("python", "repo", "command", "argv", "exec",
-                               "program", "interpreter", "start", "launch"):
+                               "program", "interpreter"):
             assert executable_ish not in fields
+
+    def test_a_launch_block_cannot_smuggle_a_command(self):
+        """The one field that reaches a supervisor accepts identifiers only.
+
+        This is the whole safety property of click-to-start: whatever a hostile
+        descriptor puts here, it cannot become a program, a path, or an extra
+        argument.
+        """
+        from roost import launcher
+
+        for smuggled in ("/usr/bin/python /tmp/evil", "a;whoami",
+                         "../../etc/passwd", r"C:\evil.exe", "svc $(id)",
+                         "--exec=/tmp/evil"):
+            with pytest.raises(launcher.LaunchError):
+                launcher.parse({"kind": "launchd", "id": smuggled})
 
     def test_an_extra_command_field_in_a_descriptor_is_dropped(self, tmp_path):
         """A raven that *tries* to hand Roost a command gets it ignored.

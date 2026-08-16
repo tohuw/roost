@@ -272,10 +272,24 @@ class TestLifecycle:
 
 class TestNoLauncherRemains:
     def test_the_module_imports_no_launcher_module(self):
-        source = Path(windows_tray.__file__).read_text(encoding="utf-8")
-        for forbidden in ("import process", "import registry", "import launch",
-                          "import cleanup", "import menubar"):
-            assert forbidden not in source, forbidden
+        """None of Appistry's app-launching machinery came along.
+
+        Matched on whole module names, not substrings: `roost.launcher` asks a
+        supervisor to start a *raven* by identifier, which is a different thing
+        from Appistry's `launch` module that ran arbitrary apps -- and a
+        substring check called the legitimate one a violation.
+        """
+        import ast
+
+        tree = ast.parse(Path(windows_tray.__file__).read_text(encoding="utf-8"))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[-1] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.update(alias.name for alias in node.names)
+        for forbidden in ("process", "registry", "launch", "cleanup", "menubar"):
+            assert forbidden not in imported, forbidden
 
     def test_no_raven_id_is_special_cased(self):
         source = Path(windows_tray.__file__).read_text(encoding="utf-8")

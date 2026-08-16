@@ -56,6 +56,7 @@ else:  # pragma: no cover - importability shim only
     rumps = _RumpsShim()
 
 from roost import help_server
+from roost import launcher
 from roost import host
 from roost import icons
 from roost import paths
@@ -237,6 +238,23 @@ class RoostApp(rumps.App):
             webbrowser.open(help_server.url())
         elif action == "quit":
             self._quit()
+        elif action.startswith("start:"):
+            self._start_raven(action[len("start:"):])
+
+    def _start_raven(self, name: str) -> None:
+        """Ask the supervisor to start a stopped raven, then refresh.
+
+        The refresh is unconditional: the supervisor returning 0 means it
+        accepted the request, not that the raven is up. Its descriptor is what
+        proves that, and the next poll reads it.
+        """
+        spec = self._model.launch_spec(name)
+        if spec is None:
+            return
+        ok, reason = launcher.start(spec)
+        if not ok:
+            log.warning("Could not start %s: %s", sanitize.safe_for_log(name), reason)
+        self._refresh()
 
     def _apply_icon(self) -> None:
         """Re-read the configured icon and put it in the menu bar.

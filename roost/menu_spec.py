@@ -44,6 +44,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from roost import launcher
 from roost import ravens
 from roost import sanitize
 
@@ -286,6 +287,10 @@ class RavenMenu:
     spec: MenuSpec = field(default_factory=MenuSpec)
     reason: str = ""
     descriptor: "ravens.RavenDescriptor | None" = None
+    #: Set when this raven can be asked to start again. Carried on the menu
+    #: rather than looked up at draw time, so what is drawn is what
+    #: :meth:`signature` compared.
+    launch: "launcher.LaunchSpec | None" = None
 
     @property
     def available(self) -> bool:
@@ -302,6 +307,9 @@ class RavenMenu:
             self.name,
             self.display,
             self.reason,
+            # A raven that becomes startable must redraw, or the row never
+            # appears until something else happens to change.
+            bool(self.launch),
             self.spec.title,
             self.spec.badge,
             tuple(
@@ -327,4 +335,5 @@ def unavailable(raven: "ravens.UnavailableRaven") -> RavenMenu:
         name=raven.name,
         display=sanitize.sanitize_label(raven.display) or raven.name or "Unknown raven",
         reason=sanitize.sanitize_label(raven.reason) or "Unavailable.",
+        launch=raven.launch,
     )

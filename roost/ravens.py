@@ -35,6 +35,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from roost import launcher
 from roost import sanitize
 
 _IS_WINDOWS = sys.platform == "win32"
@@ -153,6 +154,9 @@ class RavenDescriptor:
     host_priority: int
     started: float | None
     path: Path
+    #: How to ask the OS to start this raven again, if it says. Optional: a
+    #: raven predating the field keeps working, and gets no Start row.
+    launch: "launcher.LaunchSpec | None" = None
 
     @property
     def api_range(self) -> tuple[int, int]:
@@ -179,6 +183,10 @@ class UnavailableRaven:
     display: str
     reason: str
     path: Path | None = None
+    #: Present when the descriptor parsed far enough to say how to restart it.
+    #: A raven that is *gone* is exactly the one worth offering to start, so
+    #: this must survive the liveness check that made it unavailable.
+    launch: "launcher.LaunchSpec | None" = None
 
     @property
     def available(self) -> bool:
@@ -394,6 +402,11 @@ def parse_descriptor(text: str, path: Path, *, expected_name: str) -> RavenDescr
         else _require_int(priority_raw, "host_priority", -1000, 1000)
     )
 
+    try:
+        launch = launcher.parse(payload.get("launch"))
+    except launcher.LaunchError as exc:
+        raise DescriptorError(str(exc)) from exc
+
     return RavenDescriptor(
         name=name,
         display=display,
@@ -408,6 +421,7 @@ def parse_descriptor(text: str, path: Path, *, expected_name: str) -> RavenDescr
         host_priority=host_priority,
         started=started,
         path=path,
+        launch=launch,
     )
 
 
@@ -546,6 +560,7 @@ def load_raven(path: Path) -> Raven:
             descriptor.name, descriptor.display,
             "Not running (its recorded process is gone).",
             path,
+            launch=descriptor.launch,
         )
 
     return AvailableRaven(descriptor)

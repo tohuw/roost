@@ -70,11 +70,18 @@ That is deliberate. A raven that stopped, crashed, or cannot be reached stays
 visible with a reason, because a name that silently vanished would look identical
 to one you never installed.
 
+If the raven told Roost how to start it, a **Start** row appears underneath the
+reason. Clicking it asks your computer's own startup mechanism — the same one
+`install-agent` set up — to run it again. Roost never runs anything the raven's
+status file named; it only passes along the name of a service you already
+installed. If no Start row appears, that raven has not said how, and you start it
+the usual way.
+
 Common reasons, and what they mean:
 
 | What you see | What happened |
 |---|---|
-| Not running (its recorded process is gone) | It stopped or crashed. Start it again. |
+| Not running (its recorded process is gone) | It stopped or crashed. Use **Start** if it is offered. |
 | Is not answering on its recorded port | It is starting up, or wedged. Give it a moment, then restart it. |
 | Did not answer in time | It is busy. This usually clears on its own. |
 | Rejected the credential from its own token file | It restarted and changed its key. Restarting it again normally fixes this. |

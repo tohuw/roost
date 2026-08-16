@@ -61,7 +61,8 @@ raven change its own menu with no change to Roost.
 - Forwards clicks back to the raven that published them, under that raven's own
   credential — including a raven's own **Quit** or **Restart** row, which is an
   ordinary action id Roost passes back without knowing what it does
-- Does **not** start a raven: see [Lifecycle](#lifecycle-what-roost-does-and-does-not-own)
+- Offers to **start** a stopped raven by asking the OS supervisor, never by
+  executing anything a descriptor named: see [Lifecycle](#lifecycle-what-roost-does-and-does-not-own)
 - Renders an unreachable, stopped, or malformed raven as a **disabled section
   with a visible reason** — never as a silent omission and never as a crash
 - Elects exactly one host process by a single exclusive lock, released by the
@@ -83,20 +84,32 @@ process can stop itself; it needs no help from the menu bar, and Roost stays
 unaware that a row labelled *Quit Huginn* is different from one labelled *Approve*.
 Adding them needed no change here and no protocol version bump.
 
-**Starting a stopped raven did not, deliberately.** A stopped raven has withdrawn
-its descriptor, so Roost cannot see it: there is no name, no port, and no row to
-click. The fix that suggests itself — a file recording an interpreter and a
-checkout for Roost to run — is a write-then-execute path, and Huginn already paid
-for that once (its `daemon.json` needed 0600, an ownership check, and a
-group/world-writable check on every parent directory before the old macOS app
-could safely execute the interpreter it named). Putting one of those in a *shared*
-host would mean one process holding an exec path for every raven on the machine.
+**Starting a stopped raven came along later, and carefully.** It was left out at
+first on the grounds that a stopped raven has withdrawn its descriptor, so Roost
+cannot see it — but that is only true of a *clean* shutdown. A kill, a crash or a
+power cut leaves the descriptor exactly where it was, and Roost duly rendered the
+raven greyed out with "its recorded process is gone" and nothing to click. That
+is the state a status menu is least useful in, and it was reachable by simply
+force-quitting.
 
-Starting at login is the OS supervisor's job and already works without Roost:
-`huginn install-agent` registers a launchd agent, a systemd user unit, or a Windows
-`Run` key. Roost is not part of that relationship and executes nothing.
+What was actually right in the original reasoning is narrower and still holds: a
+file recording an interpreter and a checkout for Roost to run is a
+write-then-execute path, and one of those in a *shared* host means one process
+holding an exec path for every raven on the machine.
 
-So: **the ravens run themselves, the OS starts them, and Roost reports on them.**
+So a descriptor names an **identifier, never a command** — a launchd label, a
+systemd user unit, or a `Run` value — and Roost hands it to the platform's own
+supervisor. The command stays in the plist, the unit or the registry, put there
+by an `install-agent` the user ran deliberately. Roost executes nothing it found
+in a file, and the worst a forged descriptor achieves is starting a service that
+is already installed. A raven that publishes no `launch` block gets no row, and
+a `kind` that is not this machine's supervisor is ignored.
+
+Starting at login is still the OS supervisor's job and still works without Roost:
+`huginn install-agent` registers the launchd agent, systemd user unit, or Windows
+`Run` key that this then asks for by name.
+
+So: **the ravens run themselves, the OS starts them, and Roost asks and reports.**
 [SPEC.md §10](SPEC.md#10-lifecycle-quitting-restarting-and-starting) states this
 normatively and lists what else was considered.
 

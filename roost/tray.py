@@ -26,6 +26,7 @@ from enum import Enum
 
 from roost import host
 from roost import menu_spec
+from roost import launcher
 from roost import sanitize
 
 
@@ -61,6 +62,7 @@ STYLE_MARKERS = {
 NO_RAVENS_LABEL = "No ravens are running"
 
 HELP_LABEL = "Help"
+START_LABEL = "Start"
 QUIT_LABEL = "Quit Roost"
 
 
@@ -121,6 +123,14 @@ def raven_rows(menu: "menu_spec.RavenMenu") -> list[Row]:
         # broken: a raven that vanishes from the menu looks like one that was
         # never installed, and the user has nothing to act on.
         rows.append(Row(RowKind.REASON, label=menu.reason))
+        # ...and a reason on its own was still a dead end. A raven that says
+        # how to start it gets a row that does, because "its process is gone"
+        # with nothing to click is the state a status menu is least useful in.
+        if menu.launch is not None and launcher.supported_here(menu.launch):
+            rows.append(
+                Row(RowKind.HOST, label=f"{START_LABEL} {menu.display}",
+                    action=f"start:{menu.name}", enabled=True)
+            )
         return rows
 
     if menu.spec.is_empty:

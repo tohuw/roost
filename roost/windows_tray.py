@@ -21,6 +21,7 @@ import webbrowser
 from pathlib import Path
 
 from roost import help_server
+from roost import launcher
 from roost import host
 from roost import icons
 from roost import paths
@@ -147,6 +148,23 @@ class RoostWindowsTray:
             webbrowser.open(help_server.url())
         elif action == "quit":
             self._shutdown()
+        elif action.startswith("start:"):
+            self._start_raven(action[len("start:"):])
+
+    def _start_raven(self, name: str) -> None:
+        """Ask the supervisor to start a stopped raven, then refresh.
+
+        The refresh is unconditional: the supervisor accepting the request is
+        not the same as the raven being up. Its descriptor is what proves that,
+        and the next poll reads it.
+        """
+        spec = self._model.launch_spec(name)
+        if spec is None:
+            return
+        ok, reason = launcher.start(spec)
+        if not ok:
+            log.warning("Could not start %s: %s", name, reason)
+        self._refresh()
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
