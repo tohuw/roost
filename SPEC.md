@@ -447,9 +447,17 @@ The host checks that the process you named is alive, resisting **PID reuse**:
   another user.
 - If the start time **cannot be determined**, the check does not contradict — a
   missing cross-check must never turn a live raven into a dead one.
+- A **zero or negative `started` means "unknown"**, and is treated exactly as if
+  you had omitted the field. That is the value a raven writes when it could not
+  read its own start time, so comparing against it would fail for every live
+  process rather than only for recycled PIDs.
 
-**Supply `started`.** Without it, a recycled PID can pass as a live raven and the
-user sees a raven that is not running.
+**Supply `started`, and read it from the OS** — not from the clock at the moment
+you write the descriptor. Without it, a recycled PID can pass as a live raven.
+With a wall-clock reading, the opposite happens the moment the two diverge by
+more than the slack: any republish from a process that has been running a while
+— a restart handled in-process, say — stamps "now" onto a process the OS says
+began long ago, and the host declares a healthy raven gone.
 
 ### Unavailability is a first-class result
 

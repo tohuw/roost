@@ -391,8 +391,18 @@ def parse_descriptor(text: str, path: Path, *, expected_name: str) -> RavenDescr
         started = None
     elif isinstance(started_raw, bool) or not isinstance(started_raw, (int, float)):
         raise DescriptorError("started must be a number")
-    elif not (0 <= started_raw <= 2**53):
+    elif started_raw > 2**53:
         raise DescriptorError("started must be a plausible epoch time")
+    elif started_raw <= 0:
+        # Zero or negative is how a raven that could not read its own start time
+        # records "unknown" -- corvidae's descriptor_is_live says so explicitly,
+        # and a raven built on it will write exactly that. Treated as absent, not
+        # as a value to compare: comparing would fail for *every* live process
+        # rather than only recycled PIDs, and refusing the descriptor outright
+        # (which a negative used to do) hid the raven behind a parse error. Both
+        # break §8's rule that a missing cross-check must never turn a live raven
+        # into a dead one.
+        started = None
     else:
         started = float(started_raw)
 

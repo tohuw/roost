@@ -154,6 +154,29 @@ class TestValidDescriptor:
         assert isinstance(raven, ravens.AvailableRaven)
         assert raven.descriptor.endpoints == {}
 
+    @pytest.mark.parametrize("unknown", [0, 0.0, -1, -1.5])
+    def test_a_non_positive_started_means_unknown_not_dead(self, tmp_path, unknown):
+        """Zero and negative are how a raven records "I could not tell".
+
+        corvidae's descriptor_is_live says so outright, so a raven built on it
+        writes exactly that. Comparing against the value would fail for every
+        live process rather than only recycled PIDs, and a negative used to be
+        refused as a malformed descriptor — hiding a running raven behind a
+        parse error. Both break §8: a missing cross-check must never turn a live
+        raven into a dead one.
+        """
+        payload = _payload(pid=os.getpid(), started=unknown)
+        raven = ravens.load_raven(_write(tmp_path, "huginn", payload))
+        assert isinstance(raven, ravens.AvailableRaven), getattr(raven, "reason", "")
+        assert raven.descriptor.started is None
+
+    def test_an_absurd_started_is_still_refused(self, tmp_path):
+        """Unknown is one thing; a number that cannot be a time is another."""
+        payload = _payload(started=2**60)
+        raven = ravens.load_raven(_write(tmp_path, "huginn", payload))
+        assert isinstance(raven, ravens.UnavailableRaven)
+        assert "started" in raven.reason
+
 
 # ── Version compatibility: ranges, not equality (huginn #38) ──────────────────
 
