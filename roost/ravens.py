@@ -478,13 +478,13 @@ def pid_is_alive(pid: int, started: float | None = None) -> bool:
         return False
 
     if started is not None:
-        actual = _posix_process_start_time(pid)
+        actual = process_start_time(pid)
         if actual is not None and abs(actual - started) > 2.0:
             return False
     return True
 
 
-def _posix_process_start_time(pid: int) -> float | None:
+def process_start_time(pid: int) -> float | None:
     """Return a process's start time as epoch seconds, or None if unknown.
 
     Uses ``ps -o lstart``-free arithmetic via ``psutil`` when it is installed,
@@ -500,6 +500,23 @@ def _posix_process_start_time(pid: int) -> float | None:
         return float(psutil.Process(pid).create_time())
     except Exception:
         return None
+
+
+def default_started() -> float:
+    """This process's start time, for the ``started`` field of a descriptor.
+
+    ``started`` describes when the *process* began, not when the descriptor was
+    written — :func:`pid_is_alive` corroborates it against the OS's own record,
+    so anything else fails that check. Writing ``time.time()`` here is only
+    right for a raven that publishes the instant it starts; one that republishes
+    later (on a state change, say) would stamp a fresh timestamp onto a process
+    the OS says began long ago, and the host would declare the live raven dead.
+
+    Falls back to the current time when the OS record is unavailable, which is
+    the same "cannot corroborate" case :func:`process_start_time` returns None
+    for — and which the liveness check treats as no evidence either way.
+    """
+    return process_start_time(os.getpid()) or time.time()
 
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
@@ -615,7 +632,7 @@ class DescriptorDocument:
     display: str
     port: int
     pid: int = field(default_factory=os.getpid)
-    started: float = field(default_factory=time.time)
+    started: float = field(default_factory=lambda: default_started())
     token_path: str | None = None
     token_header: str = ""
     endpoints: dict[str, str] = field(default_factory=dict)

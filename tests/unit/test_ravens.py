@@ -387,14 +387,14 @@ class TestLiveness:
         """A live PID whose start time disagrees is a different process."""
         monkeypatch.setattr(ravens, "_IS_WINDOWS", False)
         monkeypatch.setattr(ravens.os, "kill", lambda _pid, _sig: None)
-        monkeypatch.setattr(ravens, "_posix_process_start_time", lambda _pid: 5_000.0)
+        monkeypatch.setattr(ravens, "process_start_time", lambda _pid: 5_000.0)
         assert ravens.pid_is_alive(1234, started=9_000.0) is False
         assert ravens.pid_is_alive(1234, started=5_000.5) is True
 
     def test_unknown_start_time_does_not_contradict_liveness(self, monkeypatch):
         monkeypatch.setattr(ravens, "_IS_WINDOWS", False)
         monkeypatch.setattr(ravens.os, "kill", lambda _pid, _sig: None)
-        monkeypatch.setattr(ravens, "_posix_process_start_time", lambda _pid: None)
+        monkeypatch.setattr(ravens, "process_start_time", lambda _pid: None)
         assert ravens.pid_is_alive(1234, started=9_000.0) is True
 
     def test_stale_descriptor_renders_as_unavailable(self, tmp_path, monkeypatch):
