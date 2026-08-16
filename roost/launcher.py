@@ -99,9 +99,15 @@ def parse(raw: object) -> LaunchSpec | None:
 def _run(argv: list[str]) -> tuple[bool, str]:
     """Run a supervisor command. Never raises; never uses a shell."""
     try:
+        # encoding rather than text=True: the latter decodes with the *locale*
+        # encoding, and what is being decoded is a supervisor's error message,
+        # which is localised and not necessarily representable in it. A
+        # UnicodeDecodeError is neither SubprocessError nor OSError, so it would
+        # escape both handlers below and take the menu action with it.
+        # errors="replace" because a mangled glyph in a reason beats no reason.
         completed = subprocess.run(
-            argv, capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
-            shell=False, check=False,
+            argv, capture_output=True, timeout=TIMEOUT_SECONDS,
+            encoding="utf-8", errors="replace", shell=False, check=False,
         )
     except FileNotFoundError:
         return False, f"{argv[0]} is not available on this system"

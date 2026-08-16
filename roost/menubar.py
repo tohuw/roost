@@ -104,9 +104,16 @@ def _source_zshenv() -> dict[str, str]:
     if not _IS_MACOS:
         return {}
     try:
+        # errors="replace" rather than text=True's strict locale decode. An
+        # environment can hold bytes that are not valid in it -- a path with an
+        # odd byte is enough -- and the failure mode was quiet and total: the
+        # decode raises inside run(), the blanket except below swallows it, and
+        # the tray silently proceeds with *no* inherited environment at all,
+        # including the RAVENS_STATE_DIR this function exists to find.
         result = subprocess.run(
             ["zsh", "-c", "source ~/.zshenv 2>/dev/null; env -0"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, timeout=5,
+            encoding="utf-8", errors="replace",
         )
     except Exception:
         return {}
