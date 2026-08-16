@@ -59,6 +59,7 @@ All paths below are relative to `roost/`.
 | `windows_support.py` | Windows shortcuts, user PATH/environment, tray process |
 | `help_server.py` | The one loopback listener: the Help page and `/api/status` |
 | `icons.py` | The tray icon: the raven, resolved per platform |
+| `launcher.py` | Asks the OS supervisor to start a stopped raven, by identifier |
 | `paths.py` | Roost's own state directory and the owner-only write helpers |
 | `sanitize.py` | Strips escapes/controls/bidi from untrusted strings |
 | `cli.py` | CLI: `install`, `uninstall`, `ui`, `ravens` |

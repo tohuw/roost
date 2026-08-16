@@ -13,12 +13,15 @@ unit suite can exercise the pure path and argument logic on any platform.
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import ntpath
 import os
+import shutil
 import subprocess
 import sys
 import time
+from ctypes import wintypes
 from pathlib import Path
 
 from roost import help_server
@@ -94,9 +97,125 @@ def write_tray_pid() -> None:
     paths.atomic_write_text(tray_pid_path(), str(os.getpid()))
 
 
+#: Windows names a tray entry after the *executable's* ``FileDescription``,
+#: falling back to the filename when there is none. The tray runs on the base
+#: interpreter, whose FileDescription is "Python", so Settings > Taskbar listed
+#: Roost as "Python". Confirmed by reading HKCU\Control Panel\NotifyIconSettings,
+#: which records the interpreter's path rather than Roost's.
+BRANDED_LAUNCHER = "Roost.exe"
+
+
+def _base_interpreter(repo_dir: Path) -> Path | None:
+    r"""The real interpreter behind the venv, not its trampoline.
+
+    uv builds ``Scripts\pythonw.exe`` as a trampoline that re-execs the base
+    interpreter, and it is the *child* that owns the tray icon -- which is why
+    renaming the trampoline would change nothing. ``pyvenv.cfg`` names the home.
+    """
+    config = repo_dir / ".venv" / "pyvenv.cfg"
+    try:
+        text = config.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip().lower() == "home":
+            candidate = Path(value.strip()) / "pythonw.exe"
+            return candidate if candidate.exists() else None
+    return None
+
+
+def _strip_version_resource(path: Path) -> bool:
+    """Remove RT_VERSION from a PE, leaving every other resource alone.
+
+    Only the version resource: ``bDeleteExistingResources=False``, so the
+    application manifest survives -- that is what carries the DPI awareness and
+    UAC settings the interpreter needs, and dropping it would change how the
+    tray runs in order to fix what it is called.
+
+    One Begin/End cycle *per language*, stopping at the first that works.
+    Measured on Windows 11: deleting under ``0x0409`` succeeds, deleting under
+    the neutral ``0x0000`` fails with ERROR_INVALID_PARAMETER -- and a failed
+    UpdateResource poisons the handle, so ``EndUpdateResource`` then discards a
+    delete that had already succeeded. Batching the two attempts silently
+    produced no change at all.
+    """
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.BeginUpdateResourceW.restype = wintypes.HANDLE
+    kernel32.BeginUpdateResourceW.argtypes = [wintypes.LPCWSTR, wintypes.BOOL]
+    kernel32.UpdateResourceW.restype = wintypes.BOOL
+    kernel32.UpdateResourceW.argtypes = [
+        wintypes.HANDLE, wintypes.LPCWSTR, wintypes.LPCWSTR,
+        wintypes.WORD, wintypes.LPVOID, wintypes.DWORD,
+    ]
+    kernel32.EndUpdateResourceW.restype = wintypes.BOOL
+    kernel32.EndUpdateResourceW.argtypes = [wintypes.HANDLE, wintypes.BOOL]
+
+    rt_version = ctypes.cast(ctypes.c_void_p(16), wintypes.LPCWSTR)
+    first_entry = ctypes.cast(ctypes.c_void_p(1), wintypes.LPCWSTR)
+
+    for language in (0x0409, 0x0000):
+        handle = kernel32.BeginUpdateResourceW(str(path), False)
+        if not handle:
+            return False
+        deleted = kernel32.UpdateResourceW(
+            handle, rt_version, first_entry, language, None, 0)
+        committed = kernel32.EndUpdateResourceW(handle, not deleted)
+        if deleted and committed and not _has_version_resource(path):
+            return True
+    return False
+
+
+def _has_version_resource(path: Path) -> bool:
+    """Does this PE still carry version info? Zero bytes means the shell falls
+    back to the filename, which is the whole point of stripping it."""
+    version = ctypes.WinDLL("version", use_last_error=True)
+    version.GetFileVersionInfoSizeW.argtypes = [
+        wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
+    return bool(version.GetFileVersionInfoSizeW(str(path), None))
+
+
+def branded_launcher(repo_dir: Path) -> Path | None:
+    """A copy of the interpreter that Windows will call "Roost". None on failure.
+
+    A copy placed in ``Scripts`` still finds the venv: that is exactly how a
+    classic venv is laid out, and CPython looks for ``pyvenv.cfg`` next to the
+    executable's directory. So this changes the tray's shell identity without
+    changing what runs.
+
+    Best-effort throughout. Every failure returns None and the caller falls back
+    to ``pythonw.exe``, because a tray that starts under the wrong name is
+    strictly better than one that does not start.
+    """
+    if not is_windows():
+        return None
+    source = _base_interpreter(repo_dir)
+    if source is None:
+        return None
+    target = repo_dir / ".venv" / "Scripts" / BRANDED_LAUNCHER
+    try:
+        # Rebuilt when the interpreter has been upgraded underneath us.
+        if target.exists() and target.stat().st_mtime >= source.stat().st_mtime:
+            return target
+        shutil.copy2(source, target)
+    except OSError:
+        log.debug("Could not stage the branded launcher", exc_info=True)
+        return None
+    if not _strip_version_resource(target):
+        # It still runs; it just says "Python" again. Better than not starting.
+        log.debug("Could not strip the version resource from %s", target)
+    return target
+
+
 def _venv_executable(repo_dir: Path, *, windowed: bool = False) -> Path:
-    name = "pythonw.exe" if windowed else "python.exe"
-    return repo_dir / ".venv" / "Scripts" / name
+    if windowed:
+        # The tray: this is the process Windows names in Settings > Taskbar, so
+        # its shell identity is the whole reason the branded copy exists.
+        branded = branded_launcher(repo_dir)
+        if branded is not None:
+            return branded
+        return repo_dir / ".venv" / "Scripts" / "pythonw.exe"
+    return repo_dir / ".venv" / "Scripts" / "python.exe"
 
 
 def _shortcut_arguments(parts: list[str]) -> str:
