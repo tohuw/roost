@@ -70,8 +70,12 @@ raven change its own menu with no change to Roost.
 - Wears one mark, the raven, so the tray item stays findable
 - Starts after login via launchd on macOS or the Startup folder on Windows
 - Identifies itself as *Roost* on Windows, not as *Python*: the tray runs from a
-  copy of the interpreter named `Roost.exe` with its version resource stripped,
-  because Windows names a tray entry after the executable's `FileDescription`
+  copy of the interpreter named `RoostTray.exe`, carrying a version resource
+  whose `FileDescription` is `Roost`, because Windows names a tray entry after
+  that field and falls back to the filename only when it is absent. The copy
+  lives in `Scripts` beside pip's console scripts and is deliberately **not**
+  named `Roost.exe` — that is the same file as `roost.exe` on a case-insensitive
+  filesystem, and staging it there overwrites the `roost` command itself
 
 Everything binds to `127.0.0.1`. Roost makes no outbound network requests and
 holds no credential of its own.

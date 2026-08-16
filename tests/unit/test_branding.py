@@ -7,9 +7,12 @@ none — and the tray runs on the base interpreter, whose FileDescription is
 records the interpreter's path rather than Roost's, so nothing pystray sets
 could have changed it.
 
-The fix is a copy of that interpreter, named ``Roost.exe``, with its version
-resource removed. Most of this is exercised on every platform; only the actual
-PE surgery is Windows-only.
+The fix is a copy of that interpreter with a version resource naming it. Most of
+this is exercised on every platform; only the actual PE surgery is Windows-only.
+
+That copy is staged into ``Scripts``, which it shares with pip's console
+scripts, and the first version of it was named ``Roost.exe`` — the same file as
+``roost.exe`` on a case-insensitive filesystem. See ``TestItDoesNotEatTheCli``.
 """
 
 import sys
@@ -108,6 +111,47 @@ class TestLauncherSelection:
     def test_nothing_is_staged_off_windows(self, tmp_path):
         with patch.object(windows_support, "is_windows", return_value=False):
             assert windows_support.branded_launcher(tmp_path) is None
+
+
+class TestItDoesNotEatTheCli:
+    """The launcher shares ``Scripts`` with pip's console scripts.
+
+    It was named ``Roost.exe``, and Windows paths are case-insensitive, so
+    staging it copied a windowed interpreter over ``roost.exe`` — the ``roost``
+    command itself. Every invocation then exited 0 having done nothing, because
+    a GUI interpreter handed a subcommand treats it as a script path and writes
+    the resulting error to a console it does not have. Nothing surfaced it: no
+    traceback, no log line, no non-zero status, and the tray it was staged for
+    kept working perfectly.
+    """
+
+    PYPROJECT = (Path(__file__).resolve().parents[2]
+                 / "pyproject.toml").read_text(encoding="utf-8")
+
+    def _console_scripts(self):
+        """The ``[project.scripts]`` names, read without a TOML dependency."""
+        body = self.PYPROJECT.split("[project.scripts]", 1)[1]
+        body = body.split("\n[", 1)[0]
+        return [line.split("=", 1)[0].strip()
+                for line in body.splitlines() if "=" in line]
+
+    def test_the_launcher_is_not_named_after_a_console_script(self):
+        declared = {f"{name}.exe".casefold() for name in self._console_scripts()}
+        assert declared, "no console scripts parsed — the guard would be vacuous"
+        assert windows_support.BRANDED_LAUNCHER.casefold() not in declared
+
+    def test_every_declared_script_is_reserved(self):
+        """The constant above is only as good as the list it is checked against."""
+        for name in self._console_scripts():
+            assert f"{name}.exe".casefold() in windows_support._RESERVED_LAUNCHER_NAMES
+
+    def test_a_reserved_name_is_refused_at_the_write(self, tmp_path):
+        """Belt and braces: the name is a constant a later change will edit."""
+        with patch.object(windows_support, "is_windows", return_value=True), \
+             patch.object(windows_support, "BRANDED_LAUNCHER", "roost.exe"), \
+             patch.object(windows_support, "_base_interpreter") as interpreter:
+            assert windows_support.branded_launcher(tmp_path) is None
+            interpreter.assert_not_called()
 
 
 class TestTheVersionBlob:

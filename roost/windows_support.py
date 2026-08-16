@@ -104,7 +104,20 @@ def write_tray_pid() -> None:
 #: interpreter, whose FileDescription is "Python", so Settings > Taskbar listed
 #: Roost as "Python". Confirmed by reading HKCU\Control Panel\NotifyIconSettings,
 #: which records the interpreter's path rather than Roost's.
-BRANDED_LAUNCHER = "Roost.exe"
+#:
+#: **Not "Roost.exe".** That is pip's console script for this very package, and
+#: Windows paths are case-insensitive, so staging the copy silently overwrote
+#: the ``roost`` command with a windowed interpreter. Every CLI invocation then
+#: "succeeded" while doing nothing: a GUI interpreter given a subcommand treats
+#: it as a script path, finds no such file, and writes the error to a console
+#: that does not exist. The shown name comes from the resource below, never from
+#: this filename, so the two needs do not actually compete.
+BRANDED_LAUNCHER = "RoostTray.exe"
+
+#: Names ``branded_launcher`` must never stage onto, case-folded. These are
+#: pip's console scripts for this distribution; a copy over one of them removes
+#: the command it implements, and nothing about that failure is visible.
+_RESERVED_LAUNCHER_NAMES = frozenset({"roost.exe", "roost-script.py", "roost"})
 
 
 def _base_interpreter(repo_dir: Path) -> Path | None:
@@ -297,6 +310,14 @@ def branded_launcher(repo_dir: Path) -> Path | None:
     strictly better than one that does not start.
     """
     if not is_windows():
+        return None
+    if BRANDED_LAUNCHER.casefold() in _RESERVED_LAUNCHER_NAMES:
+        # Refusing here costs the tray its name; not refusing costs the user
+        # their `roost` command, silently. The guard is deliberately at the
+        # write, not only at the constant, because the constant is exactly the
+        # kind of thing a later change edits without knowing what shares that
+        # directory.
+        log.debug("Refusing to stage the launcher over a console script")
         return None
     source = _base_interpreter(repo_dir)
     if source is None:
