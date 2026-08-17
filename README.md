@@ -169,7 +169,10 @@ py -3 -m roost.cli install
 
 `install` creates the virtualenv, registers login startup (a launchd agent on
 macOS, a Startup shortcut on Windows), installs the `roost` CLI, and starts
-the tray. It is safe to re-run.
+the tray. On macOS it also builds the managed `~/Applications/Roost.app` entry;
+it starts Roost itself and does not launch or supervise ravens. `uninstall`
+removes that bundle, while refusing to replace or remove an unrelated app. It is
+safe to re-run.
 
 ## CLI
 

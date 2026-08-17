@@ -21,6 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from roost import app_bundle
 from roost import help_server
 from roost import paths
 from roost import ravens
@@ -218,6 +219,14 @@ def cmd_install(args: argparse.Namespace) -> int:
         print("Warning: launchctl load failed.", file=sys.stderr)
     subprocess.run(["launchctl", "start", LABEL])
 
+    try:
+        bundle = app_bundle.install()
+    except (OSError, RuntimeError) as exc:
+        print(f"Roost application bundle not installed: {exc}", file=sys.stderr)
+        return 1
+    if bundle is not None:
+        print(f"Application entry: {bundle}")
+
     shim = REPO / "bin" / COMMAND
     if shim.exists():
         for bin_dir in (Path("/usr/local/bin"), home / ".local" / "bin"):
@@ -278,6 +287,9 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
                     print(f"Leaving {symlink} (points elsewhere).")
             except PermissionError:
                 print(f"Note: could not remove {symlink} (no write permission).")
+
+    if app_bundle.uninstall():
+        print(f"Removed application: {app_bundle.bundle_path()}")
 
     print("Roost uninstalled. The ravens were not touched.")
     return 0
