@@ -1,4 +1,15 @@
-"""Bounded, per-bird HTTP client for fetching menus and forwarding actions.
+"""Bounded, per-bird client for fetching menus and forwarding actions.
+
+Two transports live here. A descriptor with no ``transport`` field (or
+``transport: "http"``) speaks the original loopback-HTTP surface, unchanged
+below. A descriptor declaring ``transport: "unix"`` or ``"pipe"`` speaks over
+``multiprocessing.connection`` instead — see
+docs/specs/021-unix-socket-transport.md in Muninn's repository for the
+normative wire contract, and SPEC.md's own transport section for the client
+side of it. Every public function here dispatches on ``descriptor.transport``
+right at the top and does not let the two paths blend: a bird that has never
+heard of the socket transport must go on validating and failing exactly as it
+always has, byte for byte.
 
 Two invariants govern this module.
 
@@ -30,6 +41,7 @@ import logging
 import urllib.error
 import urllib.parse
 import urllib.request
+from multiprocessing import connection
 from pathlib import Path
 
 from roost import birds
@@ -106,6 +118,117 @@ def read_token(descriptor: BirdDescriptor) -> str | None:
         )
         return None
     return token
+
+
+def _read_authkey(descriptor: BirdDescriptor) -> bytes | None:
+    """Read a Windows named-pipe authkey from this bird's ``token_path``.
+
+    Deliberately not :func:`read_token`: that function decodes its file as
+    UTF-8 text and refuses anything carrying CR/LF or a control character,
+    which is the right rule for a credential that rides in an HTTP header and
+    the wrong one for 32 raw bytes handed to ``multiprocessing.connection``
+    unmodified. Read fresh on every call for the same reason a token is — a
+    bird mints a fresh key per run (docs/specs/021) and a cached one would
+    authenticate with a dead credential.
+
+    ``None`` on POSIX's own ``unix`` transport is normal, not a failure: that
+    transport carries no token by design, and a missing file there simply
+    means the descriptor never declared one, exactly like an HTTP bird with no
+    ``token_path``.
+    """
+    path = descriptor.token_path
+    if path is None:
+        return None
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(birds.MAX_TOKEN_BYTES + 1)
+    except OSError:
+        log.debug(
+            "Could not read authkey for bird %s", sanitize.safe_for_log(descriptor.name)
+        )
+        return None
+    if not raw or len(raw) > birds.MAX_TOKEN_BYTES:
+        log.warning(
+            "Refusing missing or oversized authkey file for bird %s",
+            sanitize.safe_for_log(descriptor.name),
+        )
+        return None
+    return raw
+
+
+def _socket_family(descriptor: BirdDescriptor) -> str:
+    return "AF_UNIX" if descriptor.transport == birds.TRANSPORT_UNIX else "AF_PIPE"
+
+
+def _decode_socket_reply(raw: bytes) -> dict:
+    """Parse one ``{"ok": ..., ...}`` reply. Raises :class:`BirdRequestError`.
+
+    The wire shape is Muninn's docs/specs/021: ``{"ok": true, "body": ...}`` or
+    ``{"ok": false, "error": "..."}``. An ``ok`` reply that is not literally
+    ``True`` is treated as a failure — including a missing ``ok`` key entirely
+    — because there is no HTTP status code here to carry that signal instead.
+    """
+    if not raw:
+        raise BirdRequestError("Answered with an empty body.")
+    try:
+        payload = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        raise BirdRequestError("Answered with something that is not JSON.") from None
+    if not isinstance(payload, dict):
+        raise BirdRequestError("Answered with a JSON value that is not an object.")
+    if payload.get("ok") is not True:
+        reason = payload.get("error")
+        if not isinstance(reason, str) or not reason:
+            reason = "unknown error"
+        raise BirdRequestError(sanitize.sanitize_label(reason, 120) or "Answered with an error.")
+    return payload
+
+
+def _socket_request(descriptor: BirdDescriptor, op_body: dict, *, timeout: float) -> dict:
+    """Perform one bounded ``multiprocessing.connection`` request-reply.
+
+    One connection per call, matching the transport's own contract (SPEC.md,
+    docs/specs/021): connect, send one message, wait bounded for one reply,
+    close. ``Client``/``Connection`` take no timeout parameter, so the bound on
+    the wait comes from :func:`multiprocessing.connection.wait` rather than
+    from the connect or the send, which are local IPC and do not block on
+    anything remote.
+    """
+    authkey = (
+        _read_authkey(descriptor) if descriptor.transport == birds.TRANSPORT_PIPE else None
+    )
+    try:
+        conn = connection.Client(
+            descriptor.address, family=_socket_family(descriptor), authkey=authkey
+        )
+    except (OSError, ValueError):
+        raise BirdRequestError("Is not answering on its recorded address.") from None
+    try:
+        try:
+            conn.send_bytes(json.dumps(op_body).encode("utf-8"))
+        except OSError:
+            raise BirdRequestError("Is not answering on its recorded address.") from None
+        if not connection.wait([conn], timeout=timeout):
+            raise BirdRequestError("Did not answer in time.")
+        try:
+            raw = conn.recv_bytes(maxlength=MAX_RESPONSE_BYTES)
+        except OSError as exc:
+            # multiprocessing.connection raises OSError both for "the peer hung
+            # up" and for "the reply exceeded maxlength" -- the two read as
+            # different problems, so text-match rather than collapse them into
+            # one misleading reason.
+            reason = (
+                "Sent a response that is too large."
+                if "too long" in str(exc).lower()
+                else "Is not answering on its recorded address."
+            )
+            raise BirdRequestError(reason) from None
+    finally:
+        try:
+            conn.close()
+        except OSError:
+            pass
+    return _decode_socket_reply(raw)
 
 
 def _build_headers(descriptor: BirdDescriptor, *, json_body: bool) -> dict[str, str]:
@@ -252,6 +375,13 @@ def _request(
 
 def fetch_menu(descriptor: BirdDescriptor, *, timeout: float = MENU_TIMEOUT) -> dict:
     """Fetch a bird's raw menu payload. Raises :class:`BirdRequestError`."""
+    if descriptor.is_socket_transport:
+        op = descriptor.endpoint("menu") or "menu"
+        reply = _socket_request(descriptor, {"op": op}, timeout=timeout)
+        body = reply.get("body")
+        if not isinstance(body, dict):
+            raise BirdRequestError("Answered with a JSON value that is not an object.")
+        return body
     return _request(
         descriptor,
         _endpoint_url(descriptor, "menu", "/api/menu"),
@@ -273,6 +403,11 @@ def send_action(
     """
     if not action_id or sanitize.contains_unsafe_text(action_id):
         raise BirdRequestError("Refused an action id that is not printable text.")
+    if descriptor.is_socket_transport:
+        op = descriptor.endpoint("action") or "action"
+        return _socket_request(
+            descriptor, {"op": op, "id": action_id}, timeout=timeout
+        )
     body = json.dumps({"id": action_id}).encode("utf-8")
     return _request(
         descriptor,
@@ -286,8 +421,54 @@ def open_url(descriptor: BirdDescriptor, path: str) -> str:
     """Return the browser URL for a bird-local menu link.
 
     Built from the descriptor's own port, so a menu item cannot navigate the user
-    anywhere except the bird that offered it.
+    anywhere except the bird that offered it. For a socket transport, resolved
+    against its ``pages_dir`` instead — see :func:`_resolve_page_url`, which is
+    the same invariant restated for a filesystem rather than a port.
     """
     if not path.startswith("/"):
         raise BirdRequestError("Refused a link that is not bird-local.")
+    if descriptor.is_socket_transport:
+        return _resolve_page_url(descriptor, path)
     return f"http://127.0.0.1:{descriptor.port}{path}"
+
+
+def _resolve_page_url(descriptor: BirdDescriptor, path: str) -> str:
+    """Resolve a socket-transport link ``path`` against this bird's ``pages_dir``.
+
+    Mirrors docs/specs/021's client-side rule exactly: ``/`` maps to
+    ``pages_dir/index.html``; any other path maps to
+    ``pages_dir/<path-without-its-leading-slash>.html``. The candidate's own
+    realpath must be contained under ``pages_dir``'s realpath and must name a
+    file that already exists — anything else is refused. That containment
+    check, not the string manipulation above it, is what actually enforces "a
+    menu item cannot navigate the user anywhere except the bird that offered
+    it": a page render is authoritative, a path string is not.
+    """
+    pages_dir = descriptor.pages_dir
+    if pages_dir is None:
+        raise BirdRequestError("Publishes no pages directory for this link.")
+
+    relative = "index.html" if path == "/" else f"{path[1:]}.html"
+    # Belt and braces ahead of the realpath check below, and for a reason
+    # specific to pathlib: ``Path("/a") / "/b"`` evaluates to ``Path("/b")`` —
+    # joining an absolute path onto another silently discards the left side
+    # rather than raising. A path carrying a second leading slash (making
+    # "without its leading slash" absolute again) or a ".." segment must
+    # never reach that join at all, not rely on the resolve below to catch
+    # what the join itself already threw away.
+    if relative.startswith(("/", "\\")) or ".." in Path(relative).parts:
+        raise BirdRequestError("Refused a link that would escape its pages directory.")
+
+    candidate = pages_dir / relative
+    try:
+        real_pages = pages_dir.resolve(strict=False)
+        real_candidate = candidate.resolve(strict=False)
+    except OSError:
+        raise BirdRequestError("Could not resolve its own pages directory.") from None
+    try:
+        real_candidate.relative_to(real_pages)
+    except ValueError:
+        raise BirdRequestError("Refused a link that would escape its pages directory.") from None
+    if not real_candidate.is_file():
+        raise BirdRequestError("Has no rendered page for that link.")
+    return f"file://{real_candidate}"

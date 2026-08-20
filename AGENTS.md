@@ -36,7 +36,7 @@ Everything platform-neutral is shared; only the last mile is per-platform.
 ```
 roost/birds.py ── descriptors: discovery, validation, liveness
 roost/menu_spec.py ── the menu-as-data parser
-roost/bird_client.py ── bounded per-bird HTTP with token isolation
+roost/bird_client.py ── bounded per-bird client (HTTP, or unix/pipe) with token isolation
       │
 roost/host.py ── host election (the lock) + menu aggregation
       │
@@ -51,7 +51,7 @@ All paths below are relative to `roost/`.
 |---|---|
 | `birds.py` | Descriptor path resolution, parsing, validation, PID-reuse-safe liveness |
 | `menu_spec.py` | Parses and bounds a bird's menu payload |
-| `bird_client.py` | Per-bird HTTP client; per-bird token isolation |
+| `bird_client.py` | Per-bird client, dispatched by descriptor `transport` (HTTP, or `unix`/`pipe`); per-bird token isolation |
 | `host.py` | `HostLock` (host election) and `build_model` (aggregation) |
 | `tray.py` | Turns a model into a flat `Row` list — the only place that decides menu content |
 | `menubar.py` | macOS rendering of those rows, plus the entry point |

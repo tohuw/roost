@@ -117,6 +117,30 @@ class TestCmdBirds:
         assert "47123" in out
         assert "100" in out
 
+    def test_a_socket_transport_bird_is_listed_by_address_not_port(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """A unix/pipe descriptor has no port; printing it as one would lie."""
+        directory = tmp_path / "birds"
+        directory.mkdir(parents=True)
+        payload = {
+            "api_version": 1, "min_api": 1, "max_api": 1,
+            "name": "muninn", "display": "Muninn", "pid": 1, "host_priority": 0,
+            "transport": "unix", "address": "/tmp/muninn.sock",
+            "pages_dir": "/tmp/muninn/pages", "endpoints": {"menu": "menu"},
+        }
+        (directory / "muninn.json").write_text(json.dumps(payload), encoding="utf-8")
+        monkeypatch.setattr(birds, "pid_is_alive", lambda *_a, **_k: True)
+
+        assert self._run() == 0
+        out = capsys.readouterr().out
+        assert "Muninn" in out
+        assert "unix" in out
+        assert "/tmp/muninn.sock" in out
+        # "transport" legitimately contains "port" as a substring; assert on
+        # the actual port-printing line rather than a bare substring check.
+        assert "      port " not in out
+
     def test_an_unavailable_bird_is_listed_with_its_reason(
         self, tmp_path, monkeypatch, capsys
     ):

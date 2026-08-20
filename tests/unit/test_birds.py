@@ -536,6 +536,95 @@ class TestLegacyDirectory:
         assert birds.state_dir() == tmp_path / "new"
 
 
+class TestSocketTransport:
+    """The ``unix``/``pipe`` transport dispatch inside descriptor parsing.
+
+    Modeled on Muninn's own descriptor (docs/specs/021-unix-socket-transport.md
+    in its repository): no ``port``, a required ``address`` and ``pages_dir``,
+    and ``endpoints`` holding op names rather than paths.
+    """
+
+    def _socket_payload(self, **overrides):
+        payload = _payload(transport="unix", address="/tmp/muninn.sock",
+                            pages_dir="/tmp/muninn/pages",
+                            endpoints={"menu": "menu"})
+        del payload["port"]
+        payload.update(overrides)
+        return payload
+
+    def test_a_valid_unix_descriptor_parses(self, tmp_path):
+        bird = birds.load_bird(_write(tmp_path, "huginn", self._socket_payload()))
+        assert isinstance(bird, birds.AvailableBird), getattr(bird, "reason", "")
+        descriptor = bird.descriptor
+        assert descriptor.transport == birds.TRANSPORT_UNIX
+        assert descriptor.port is None
+        assert descriptor.address == "/tmp/muninn.sock"
+        assert descriptor.pages_dir == Path("/tmp/muninn/pages")
+        assert descriptor.is_socket_transport is True
+        assert descriptor.endpoint("menu") == "menu"
+
+    def test_no_transport_field_still_means_http(self, tmp_path):
+        """The one field whose *absence* is the contract, not its presence."""
+        bird = birds.load_bird(_write(tmp_path, "huginn", _payload()))
+        assert isinstance(bird, birds.AvailableBird)
+        assert bird.descriptor.transport == birds.TRANSPORT_HTTP
+        assert bird.descriptor.is_socket_transport is False
+
+    def test_an_unrecognised_transport_is_refused(self, tmp_path):
+        bird = birds.load_bird(
+            _write(tmp_path, "huginn", self._socket_payload(transport="carrier-pigeon"))
+        )
+        assert isinstance(bird, birds.UnavailableBird)
+        assert "transport" in bird.reason
+
+    def test_missing_address_is_refused(self, tmp_path):
+        payload = self._socket_payload()
+        del payload["address"]
+        bird = birds.load_bird(_write(tmp_path, "huginn", payload))
+        assert isinstance(bird, birds.UnavailableBird)
+        assert "address" in bird.reason
+
+    def test_missing_pages_dir_is_refused(self, tmp_path):
+        payload = self._socket_payload()
+        del payload["pages_dir"]
+        bird = birds.load_bird(_write(tmp_path, "huginn", payload))
+        assert isinstance(bird, birds.UnavailableBird)
+        assert "pages_dir" in bird.reason
+
+    def test_a_relative_pages_dir_is_refused(self, tmp_path):
+        bird = birds.load_bird(
+            _write(tmp_path, "huginn", self._socket_payload(pages_dir="pages"))
+        )
+        assert isinstance(bird, birds.UnavailableBird)
+        assert "pages_dir" in bird.reason
+
+    def test_a_port_alongside_a_socket_transport_is_simply_ignored(self, tmp_path):
+        """Muninn's own descriptor omits ``port`` outright; an extra one is inert."""
+        bird = birds.load_bird(
+            _write(tmp_path, "huginn", self._socket_payload(port=47100))
+        )
+        assert isinstance(bird, birds.AvailableBird), getattr(bird, "reason", "")
+        assert bird.descriptor.port is None
+
+    def test_a_path_shaped_endpoint_value_is_refused_on_a_socket_transport(self, tmp_path):
+        """On this transport ``endpoints`` values are op names, not paths."""
+        bird = birds.load_bird(
+            _write(tmp_path, "huginn",
+                   self._socket_payload(endpoints={"menu": "/api/menu"}))
+        )
+        assert isinstance(bird, birds.UnavailableBird)
+        assert "endpoints" in bird.reason
+
+    def test_pipe_transport_reads_a_token_path_as_an_authkey_location(self, tmp_path):
+        payload = self._socket_payload(transport="pipe",
+                                        address=r"\\.\pipe\muninn-raven",
+                                        token_path=str(tmp_path / "muninn.token"))
+        bird = birds.load_bird(_write(tmp_path, "huginn", payload))
+        assert isinstance(bird, birds.AvailableBird), getattr(bird, "reason", "")
+        assert bird.descriptor.transport == birds.TRANSPORT_PIPE
+        assert bird.descriptor.token_path == tmp_path / "muninn.token"
+
+
 class TestDescriptorDocument:
     def test_publisher_output_parses(self, tmp_path):
         document = birds.DescriptorDocument(name="huginn", display="Huginn", port=47100)
@@ -544,6 +633,21 @@ class TestDescriptorDocument:
         )
         assert parsed.name == "huginn"
         assert parsed.api_range == (birds.MIN_API_VERSION, birds.API_VERSION)
+
+    def test_a_socket_transport_document_round_trips(self, tmp_path):
+        document = birds.DescriptorDocument(
+            name="muninn", display="Muninn", transport=birds.TRANSPORT_UNIX,
+            address="/tmp/muninn.sock", pages_dir="/tmp/muninn/pages",
+            endpoints={"menu": "menu"},
+        )
+        parsed = birds.parse_descriptor(
+            document.to_json(), tmp_path / "muninn.json", expected_name="muninn"
+        )
+        assert parsed.transport == birds.TRANSPORT_UNIX
+        assert parsed.port is None
+        assert parsed.address == "/tmp/muninn.sock"
+        assert parsed.pages_dir == Path("/tmp/muninn/pages")
+        assert "port" not in document.to_dict()
 
     def test_optional_fields_are_omitted_when_unset(self):
         document = birds.DescriptorDocument(name="huginn", display="Huginn", port=47100)

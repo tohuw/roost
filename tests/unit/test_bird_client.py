@@ -8,11 +8,14 @@ proposal — that one bird's credential never reaches another bird.
 
 import http.server
 import json
+import shutil
 import socketserver
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
+from multiprocessing import connection
 from pathlib import Path
 from unittest.mock import patch
 
@@ -492,3 +495,331 @@ class TestOpenUrl:
     def test_refuses_a_non_local_path(self, tmp_path):
         with pytest.raises(bird_client.BirdRequestError):
             bird_client.open_url(_descriptor(47100, tmp_path), "http://evil.example/")
+
+
+# ── The unix-socket / named-pipe transport ────────────────────────────────────
+#
+# docs/specs/021-unix-socket-transport.md (in Muninn's own repository) is the
+# normative source for the wire contract these tests pin from Roost's side:
+# one connection per call, a JSON op in the body, a reply of
+# {"ok": true, "body": ...} or {"ok": false, "error": "..."}.
+#
+# AF_PIPE (Windows named pipes) cannot be exercised here at all --
+# multiprocessing.connection has no AF_PIPE implementation outside win32, and
+# this machine is not one. The pipe-specific tests below mock
+# multiprocessing.connection.Client to pin the *dispatch* (family, authkey) and
+# rely on real Windows CI, or a human on a Windows box, to prove the transport
+# itself -- the same caveat docs/specs/021 states for the server side.
+
+def _socket_descriptor(tmp_path, *, address, pages_dir=None, transport=birds.TRANSPORT_UNIX,
+                       **overrides):
+    values = {
+        "name": "muninn",
+        "display": "Muninn",
+        "api_version": 1,
+        "min_api": 1,
+        "max_api": 1,
+        "pid": 1,
+        "port": None,
+        "token_path": None,
+        "token_header": "",
+        "endpoints": {},
+        "host_priority": 0,
+        "started": None,
+        "path": tmp_path / "muninn.json",
+        "transport": transport,
+        "address": str(address),
+        "pages_dir": pages_dir,
+    }
+    values.update(overrides)
+    return birds.BirdDescriptor(**values)
+
+
+class _UnixBird:
+    """A minimal stand-in raven speaking the unix-socket transport.
+
+    One accept loop, one thread per connection, same shape as
+    ``ravenserve._Server`` but with just enough behaviour for these tests: a
+    fixed reply (or none, to model a hang), and a record of every request it
+    was sent.
+    """
+
+    def __init__(self, tmp_path=None, *, reply=None, hang=False, delay=0.0):
+        # Not under pytest's own tmp_path: that fixture nests several
+        # directories deep, and a Unix domain socket path is capped at
+        # roughly 100 bytes on macOS/BSD -- well inside what a real
+        # ravens-state-dir path (~/.local/state/birds/muninn/muninn.sock)
+        # uses, but not inside pytest's own scratch tree. ``tmp_path`` is
+        # accepted and ignored so call sites read the same as every other
+        # fixture-based server in this file.
+        self._own_dir = tempfile.mkdtemp(prefix="rst-")
+        self.address = Path(self._own_dir) / "muninn.sock"
+        self.requests: list[dict] = []
+        self._reply = {"ok": True, "body": {"sections": []}} if reply is None else reply
+        self._hang = hang
+        self._delay = delay
+        self._listener = connection.Listener(str(self.address), family="AF_UNIX")
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self):
+        while True:
+            try:
+                conn = self._listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    def _handle(self, conn):
+        try:
+            raw = conn.recv_bytes()
+            self.requests.append(json.loads(raw.decode("utf-8")))
+            if self._hang:
+                # Outlives any test's own timeout. Never closing the
+                # connection is the point: closing it would make recv_bytes
+                # raise EOFError immediately, which is a dropped connection,
+                # not a hang -- the two must not be conflated in the client
+                # under test either.
+                time.sleep(10)
+                return
+            if self._delay:
+                time.sleep(self._delay)
+            conn.send_bytes(json.dumps(self._reply).encode("utf-8"))
+        except OSError:
+            pass
+        finally:
+            if not self._hang:
+                conn.close()
+
+    def close(self):
+        self._listener.close()
+        shutil.rmtree(self._own_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def unix_bird():
+    server = _UnixBird()
+    try:
+        yield server
+    finally:
+        server.close()
+
+
+class TestUnixSocketFetchMenu:
+    def test_returns_the_body_of_an_ok_reply(self, unix_bird, tmp_path):
+        unix_bird._reply = {"ok": True, "body": {"sections": [], "title": "Muninn"}}
+        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        assert bird_client.fetch_menu(descriptor) == {"sections": [], "title": "Muninn"}
+
+    def test_sends_the_menu_op(self, unix_bird, tmp_path):
+        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        bird_client.fetch_menu(descriptor)
+        assert unix_bird.requests[-1] == {"op": "menu"}
+
+    def test_a_declared_op_name_overrides_the_default(self, unix_bird, tmp_path):
+        """``endpoints`` on this transport names ops, not paths -- SPEC.md §9a."""
+        descriptor = _socket_descriptor(
+            tmp_path, address=unix_bird.address, endpoints={"menu": "list-menu"},
+        )
+        bird_client.fetch_menu(descriptor)
+        assert unix_bird.requests[-1] == {"op": "list-menu"}
+
+    def test_an_error_reply_raises_with_its_reason(self, unix_bird, tmp_path):
+        unix_bird._reply = {"ok": False, "error": "unknown op"}
+        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        with pytest.raises(bird_client.BirdRequestError) as exc:
+            bird_client.fetch_menu(descriptor)
+        assert exc.value.reason == "unknown op"
+
+    def test_ok_true_with_a_non_object_body_is_refused(self, unix_bird, tmp_path):
+        unix_bird._reply = {"ok": True, "body": "not an object"}
+        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        with pytest.raises(bird_client.BirdRequestError) as exc:
+            bird_client.fetch_menu(descriptor)
+        assert "not an object" in exc.value.reason
+
+    def test_a_missing_ok_key_is_treated_as_failure(self, unix_bird, tmp_path):
+        """No HTTP status code exists here, so "ok" is the only success signal."""
+        unix_bird._reply = {"body": {"sections": []}}
+        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        with pytest.raises(bird_client.BirdRequestError):
+            bird_client.fetch_menu(descriptor)
+
+    def test_a_hanging_bird_times_out(self, tmp_path):
+        server = _UnixBird(hang=True)
+        try:
+            descriptor = _socket_descriptor(tmp_path, address=server.address)
+            started = time.monotonic()
+            with pytest.raises(bird_client.BirdRequestError) as exc:
+                bird_client.fetch_menu(descriptor, timeout=0.3)
+            assert time.monotonic() - started < 3.0
+            assert "in time" in exc.value.reason
+        finally:
+            server.close()
+
+    def test_an_unreachable_address_is_a_reason(self, tmp_path):
+        descriptor = _socket_descriptor(tmp_path, address=tmp_path / "no-such.sock")
+        with pytest.raises(bird_client.BirdRequestError) as exc:
+            bird_client.fetch_menu(descriptor)
+        assert "not answering" in exc.value.reason
+
+
+class TestUnixSocketSendAction:
+    def test_posts_the_action_op_and_id(self, unix_bird, tmp_path):
+        unix_bird._reply = {"ok": True}
+        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        bird_client.send_action(descriptor, "quit")
+        assert unix_bird.requests[-1] == {"op": "action", "id": "quit"}
+
+    def test_a_declared_op_name_overrides_the_default(self, unix_bird, tmp_path):
+        unix_bird._reply = {"ok": True}
+        descriptor = _socket_descriptor(
+            tmp_path, address=unix_bird.address, endpoints={"action": "do"},
+        )
+        bird_client.send_action(descriptor, "quit")
+        assert unix_bird.requests[-1] == {"op": "do", "id": "quit"}
+
+    def test_returns_the_reply_on_success(self, unix_bird, tmp_path):
+        unix_bird._reply = {"ok": True, "restarting": True}
+        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        assert bird_client.send_action(descriptor, "restart") == {
+            "ok": True, "restarting": True,
+        }
+
+    def test_an_error_reply_raises(self, unix_bird, tmp_path):
+        unix_bird._reply = {"ok": False, "error": "this raven publishes no actions"}
+        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        with pytest.raises(bird_client.BirdRequestError) as exc:
+            bird_client.send_action(descriptor, "quit")
+        assert "publishes no actions" in exc.value.reason
+
+    @pytest.mark.parametrize("bad", ["", "a\r\nb", "a\x00b", "\x1b[31m"])
+    def test_unsafe_action_ids_are_refused_before_the_wire(self, unix_bird, tmp_path, bad):
+        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        with pytest.raises(bird_client.BirdRequestError):
+            bird_client.send_action(descriptor, bad)
+        assert unix_bird.requests == []
+
+
+class TestPipeTransportDispatch:
+    """AF_PIPE cannot be exercised on this platform -- see the module note above.
+
+    These pin only that the client asks ``multiprocessing.connection.Client``
+    for the right family with the right authkey; they say nothing about
+    whether a real Windows named pipe answers correctly, which is unverified
+    here by construction.
+    """
+
+    def test_uses_af_pipe_family_and_reads_the_authkey_from_token_path(self, tmp_path):
+        token_file = tmp_path / "muninn.token"
+        token_file.write_bytes(b"\x00" * 31 + b"\x01")  # binary, not UTF-8 text
+        descriptor = _socket_descriptor(
+            tmp_path, address=r"\\.\pipe\muninn-raven",
+            transport=birds.TRANSPORT_PIPE, token_path=token_file,
+        )
+
+        fake_conn = type("FakeConn", (), {
+            "send_bytes": lambda self, data: None,
+            "recv_bytes": lambda self, maxlength=None: json.dumps(
+                {"ok": True, "body": {"sections": []}}
+            ).encode("utf-8"),
+            "close": lambda self: None,
+        })()
+
+        with patch.object(bird_client.connection, "Client", return_value=fake_conn) as client, \
+             patch.object(bird_client.connection, "wait", return_value=[fake_conn]):
+            bird_client.fetch_menu(descriptor)
+
+        args, kwargs = client.call_args
+        assert args[0] == r"\\.\pipe\muninn-raven"
+        assert kwargs["family"] == "AF_PIPE"
+        assert kwargs["authkey"] == b"\x00" * 31 + b"\x01"
+
+    def test_a_missing_token_file_means_no_authkey(self, tmp_path):
+        descriptor = _socket_descriptor(
+            tmp_path, address=r"\\.\pipe\muninn-raven",
+            transport=birds.TRANSPORT_PIPE, token_path=tmp_path / "absent",
+        )
+        fake_conn = type("FakeConn", (), {
+            "send_bytes": lambda self, data: None,
+            "recv_bytes": lambda self, maxlength=None: json.dumps(
+                {"ok": True, "body": {}}
+            ).encode("utf-8"),
+            "close": lambda self: None,
+        })()
+        with patch.object(bird_client.connection, "Client", return_value=fake_conn) as client, \
+             patch.object(bird_client.connection, "wait", return_value=[fake_conn]):
+            bird_client.fetch_menu(descriptor)
+        assert client.call_args.kwargs["authkey"] is None
+
+
+class TestPagesDirContainment:
+    """The pages_dir-containment rule from docs/specs/021, client-side.
+
+    ``url == "/"`` maps to ``pages_dir/index.html``; any other url maps to
+    ``pages_dir/<url-without-leading-slash>.html``. The candidate's realpath
+    must be contained under pages_dir's own realpath and must name a file
+    that exists -- anything else is refused.
+    """
+
+    def _pages(self, tmp_path):
+        pages = tmp_path / "pages"
+        (pages / "session").mkdir(parents=True)
+        (pages / "index.html").write_text("<p>index</p>", encoding="utf-8")
+        (pages / "session" / "abc123.html").write_text("<p>abc123</p>", encoding="utf-8")
+        return pages
+
+    def test_root_url_resolves_to_index_html(self, tmp_path):
+        pages = self._pages(tmp_path)
+        descriptor = _socket_descriptor(tmp_path, address=tmp_path / "x.sock", pages_dir=pages)
+        assert bird_client.open_url(descriptor, "/") == f"file://{pages / 'index.html'}"
+
+    def test_other_url_resolves_to_the_matching_nested_file(self, tmp_path):
+        pages = self._pages(tmp_path)
+        descriptor = _socket_descriptor(tmp_path, address=tmp_path / "x.sock", pages_dir=pages)
+        assert bird_client.open_url(descriptor, "/session/abc123") == \
+            f"file://{pages / 'session' / 'abc123.html'}"
+
+    def test_a_url_with_no_rendered_file_is_refused(self, tmp_path):
+        pages = self._pages(tmp_path)
+        descriptor = _socket_descriptor(tmp_path, address=tmp_path / "x.sock", pages_dir=pages)
+        with pytest.raises(bird_client.BirdRequestError) as exc:
+            bird_client.open_url(descriptor, "/session/does-not-exist")
+        assert "no rendered page" in exc.value.reason
+
+    def test_dotdot_traversal_is_refused(self, tmp_path):
+        pages = self._pages(tmp_path)
+        # A file that does exist just outside pages_dir, so the only thing
+        # standing between it and the response is the containment check.
+        (tmp_path / "outside.html").write_text("<p>should never be reachable</p>",
+                                                encoding="utf-8")
+        descriptor = _socket_descriptor(tmp_path, address=tmp_path / "x.sock", pages_dir=pages)
+        with pytest.raises(bird_client.BirdRequestError) as exc:
+            bird_client.open_url(descriptor, "/../outside")
+        assert "escape" in exc.value.reason
+
+    def test_an_absolute_path_disguised_as_a_url_is_refused(self, tmp_path):
+        """A second leading slash makes "without its leading slash" absolute again.
+
+        ``Path("/pages") / "/etc/passwd"`` silently discards ``/pages`` rather
+        than raising, which is exactly the footgun this rejects ahead of the
+        join rather than relying on the realpath check to notice after it.
+        """
+        pages = self._pages(tmp_path)
+        descriptor = _socket_descriptor(tmp_path, address=tmp_path / "x.sock", pages_dir=pages)
+        with pytest.raises(bird_client.BirdRequestError) as exc:
+            bird_client.open_url(descriptor, "//etc/passwd")
+        assert "escape" in exc.value.reason
+
+    def test_no_pages_dir_is_refused(self, tmp_path):
+        descriptor = _socket_descriptor(
+            tmp_path, address=tmp_path / "x.sock", pages_dir=None,
+        )
+        with pytest.raises(bird_client.BirdRequestError):
+            bird_client.open_url(descriptor, "/")
+
+    def test_http_transport_is_unaffected_by_pages_dir_logic(self, tmp_path):
+        """Byte-for-byte the pre-existing behaviour when transport is http."""
+        descriptor = _descriptor(47100, tmp_path)
+        assert bird_client.open_url(descriptor, "/console") == \
+            "http://127.0.0.1:47100/console"

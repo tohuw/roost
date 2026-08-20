@@ -82,7 +82,11 @@ def cmd_birds(args: argparse.Namespace) -> int:
         if isinstance(bird, birds.AvailableBird):
             descriptor = bird.descriptor
             print(f"  ● {display} ({name})")
-            print(f"      port     {descriptor.port}")
+            if descriptor.is_socket_transport:
+                print(f"      transport {descriptor.transport}")
+                print(f"      address  {sanitize.safe_for_log(descriptor.address, 200)}")
+            else:
+                print(f"      port     {descriptor.port}")
             print(f"      pid      {descriptor.pid}")
             print(f"      api      {descriptor.min_api}..{descriptor.max_api}")
             print(f"      priority {descriptor.host_priority}")

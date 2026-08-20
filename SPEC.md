@@ -32,6 +32,7 @@ next to the examples rather than instead of them — see
 7. [Host election](#7-host-election)
 8. [Liveness and unavailability](#8-liveness-and-unavailability)
 9. [What the host requires of your HTTP surface](#9-what-the-host-requires-of-your-http-surface)
+   - [9a. The Unix socket and named pipe transport](#9a-the-unix-socket-and-named-pipe-transport)
 10. [Lifecycle: quitting, restarting, and starting](#10-lifecycle-quitting-restarting-and-starting)
 11. [A bird's checklist](#11-a-birds-checklist)
 
@@ -138,6 +139,32 @@ Two details are easy to get wrong:
 }
 ```
 
+That is the HTTP transport — no `transport` field at all, which is the point:
+every descriptor written before this field existed is still exactly this
+shape, and still means exactly this. A `unix`/`pipe` descriptor looks
+different enough that showing it here rather than only in [§9a](#9a-the-unix-socket-and-named-pipe-transport)
+is worth the repetition:
+
+```json
+{
+  "api_version": 1,
+  "min_api": 1,
+  "max_api": 1,
+  "name": "muninn",
+  "display": "Muninn",
+  "pid": 7092,
+  "transport": "unix",
+  "address": "/Users/alice/.local/state/birds/muninn.sock",
+  "pages_dir": "/Users/alice/.local/state/birds/muninn/pages",
+  "started": 1785619470.680397,
+  "host_priority": 50,
+  "endpoints": { "menu": "menu" }
+}
+```
+
+No `port`. No `token_path`, on POSIX — see [§9a](#9a-the-unix-socket-and-named-pipe-transport)
+for why that omission is a decision and not an oversight.
+
 | Field | Required | Type | Meaning and constraints |
 |---|---|---|---|
 | `api_version` | yes | int | The protocol version you primarily speak. `1..101`. |
@@ -146,12 +173,15 @@ Two details are easy to get wrong:
 | `name` | yes | string | Your slug: `[a-z0-9][a-z0-9-]{0,31}`. **Must equal the filename stem.** |
 | `display` | no | string | Menu name, ≤64 chars. Defaults to `name`. |
 | `pid` | yes | int | Your process id. Must be `> 0`. |
-| `port` | yes | int | Your loopback port, `1..65535`. |
+| `transport` | no | string | `"unix"` or `"pipe"`. **Omit it to speak HTTP** — see [§9a](#9a-the-unix-socket-and-named-pipe-transport). |
+| `port` | required for HTTP | int | Your loopback port, `1..65535`. Absent — not merely unused — on `unix`/`pipe`. |
+| `address` | required for `unix`/`pipe` | string | Your socket path or named-pipe path. Absent on HTTP. |
+| `pages_dir` | required for `unix`/`pipe` | string | Absolute path to the directory you render link targets into. Absent on HTTP. |
 | `started` | no | number | Your process start time, epoch seconds. **Supply it** — see [§8](#8-liveness-and-unavailability). |
 | `host_priority` | no | int | Menu ordering, `-1000..1000`. Higher sorts earlier. Defaults to `0`. |
-| `token_path` | no | string | Absolute path to your token file. Omit if you accept unauthenticated requests. |
-| `token_header` | no | string | Header your token is presented in. A valid RFC 7230 token, ≤64 chars. Defaults to `X-{Name}-Token`. |
-| `endpoints` | no | object | Path map. ≤12 entries; keys `[a-z][a-z0-9_]{0,31}`. |
+| `token_path` | no | string | HTTP: absolute path to your token file; omit for unauthenticated requests. `pipe`: absolute path to your `multiprocessing.connection` authkey — see [§9a](#9a-the-unix-socket-and-named-pipe-transport). Meaningless, and never read, on `unix`. |
+| `token_header` | no | string | HTTP only. Header your token is presented in. A valid RFC 7230 token, ≤64 chars. Defaults to `X-{Name}-Token`. |
+| `endpoints` | no | object | HTTP: a path map. `unix`/`pipe`: an *op name* map — see [§9a](#9a-the-unix-socket-and-named-pipe-transport). ≤12 entries; keys `[a-z][a-z0-9_]{0,31}`. |
 | `launch` | no | object | How the host may ask this machine's supervisor to start you again. See below. |
 
 Recognised endpoint keys are `menu` (default `/api/menu`) and `action` (default
@@ -390,10 +420,18 @@ mid-response.
 
 ### Links
 
-A `url` is opened in the browser as `http://127.0.0.1:{port}{url}`, built from
-**your descriptor's own port**. A menu item cannot navigate the user anywhere
-except the bird that offered it. Query strings are allowed (a link legitimately
-carries parameters); fragments are not.
+> **A menu item cannot navigate the user anywhere except the bird that offered
+> it.** That invariant is transport-neutral; how it is enforced is not.
+
+On the HTTP transport, a `url` is opened in the browser as
+`http://127.0.0.1:{port}{url}`, built from **your descriptor's own port**.
+Query strings are allowed (a link legitimately carries parameters); fragments
+are not.
+
+On the `unix`/`pipe` transport there is no port to build that URL from at all,
+so a `url` is resolved against your descriptor's own `pages_dir` instead, and
+the invariant above is enforced by realpath containment rather than by origin
+— see [§9a](#9a-the-unix-socket-and-named-pipe-transport) for the exact rule.
 
 ---
 
@@ -562,6 +600,123 @@ menu.
 
 ---
 
+## 9a. The Unix socket and named pipe transport
+
+Everything in [§9](#9-what-the-host-requires-of-your-http-surface) is about
+one problem: a web page open in the user's browser can reach a loopback TCP
+port, so a bird on that transport has to defend against it with `Host` and
+`Origin` checks. A Unix domain socket cannot be reached that way at all — no
+browser API opens one, and there is no `Host` header to spoof because there is
+no HTTP. This section is the transport that takes that problem off the table
+instead of mitigating it, and it is a straight client-side reading of Muninn's
+own [docs/specs/021-unix-socket-transport.md](https://github.com/tohuw/muninn/blob/main/docs/specs/021-unix-socket-transport.md),
+which is the normative source for the wire contract below. If the two ever
+disagree, that document wins.
+
+**Declare it, or don't.** A descriptor with no `transport` field — every
+descriptor this protocol has ever had, and Huginn's today — means HTTP,
+exactly as [§2](#2-the-descriptor) through [§9](#9-what-the-host-requires-of-your-http-surface)
+already describe, with no change of any kind. Declaring `transport` is opting
+*in*, per bird, forever optional: nothing requires a bird to migrate, and
+nothing here bumps `api_version`.
+
+### The transports
+
+| `transport` | Platform | Address names | Credential |
+|---|---|---|---|
+| absent, or `"http"` | any | `port` | `token_path` (optional), HTTP header |
+| `"unix"` | POSIX | `address`: a socket path | none — the socket's own file mode is the whole boundary |
+| `"pipe"` | Windows | `address`: a named-pipe path (`\\.\pipe\...`) | `token_path`: a file holding a `multiprocessing.connection` authkey |
+
+`"unix"` carries no token because there is nothing a token would add: opening
+the socket already requires filesystem permission on its own inode, which is
+the same guarantee a token would exist to approximate. `"pipe"` is the
+platform Python's `socket` module has no `AF_UNIX` for, and a named pipe's
+default security descriptor does not restrict connections to its creator —
+`multiprocessing.connection`'s own documentation recommends an `authkey`
+there for exactly that reason, so this is the one case in the whole protocol
+where a socket-transport bird should publish `token_path`.
+
+### The wire contract
+
+Both transports speak `multiprocessing.connection` — `Client`/`Listener`,
+`family="AF_UNIX"` or `"AF_PIPE"` — rather than a hand-rolled protocol, because
+it already abstracts exactly this platform difference and its
+`send_bytes`/`recv_bytes` give length-prefixed framing for free. One
+connection per call: connect, send one message, read one reply, close. No
+keep-alive, no pipelining.
+
+There is no URL space to route a request on, so the request names an **op**
+in its JSON body instead of a path:
+
+```json
+{"op": "menu"}
+{"op": "action", "id": "quit"}
+```
+
+and the reply is `{"ok": true, "body": ...}` or `{"ok": false, "error": "..."}`.
+`endpoints` still exists in the descriptor and still means "what do I call
+this," but its values are now op names rather than paths — `"menu": "menu"` is
+what you send as `{"op": "menu"}`, not a route to `GET`. A menu-fetch reply's
+`body` is the same payload [§4](#4-the-menu) describes, unwrapped from its
+`ok`/`body` envelope; an action reply is whatever object you answered with,
+same as the HTTP transport's response body, just with no status code to carry
+success or failure — that is what `ok` is for here, and an action reply
+missing it, or setting it to anything but `true`, is a failure.
+
+**`Client`/`Connection` take no timeout parameter.** The host gets a bounded
+wait from `multiprocessing.connection.wait([conn], timeout=T)` before
+`recv_bytes()`, using the same 2 s menu / 5 s action budgets [§9](#9-what-the-host-requires-of-your-http-surface)
+already commits to — the transport changed; the budget did not.
+
+### Links, resolved against `pages_dir` instead of a port
+
+A socket-transport descriptor has no port for a `url` to resolve against, so
+it names `pages_dir`: a directory where you render, on every menu build, a
+static file for every link your menu just emitted. The host resolves a `url`
+against it by one rule, applied exactly:
+
+- `url == "/"` → the candidate file is `pages_dir/index.html`.
+- Any other `url` → the candidate file is `pages_dir/<url without its leading
+  slash>.html` (`/session/abc123` → `pages_dir/session/abc123.html`).
+- The candidate's **realpath** must have `pages_dir`'s own realpath as a
+  prefix, and must name a file that **already exists**. Anything else —
+  containment failure or a missing file — is refused, with no distinction
+  between the two in what the user sees.
+
+That containment check, not the string manipulation above it, is what
+actually enforces [the Links invariant](#links): a bird can only ever open
+something it itself rendered under its own directory, because the host never
+trusts a `url` to describe a real file — it demands the file and checks where
+it actually is.
+
+**Render only what you just linked to.** The host's containment check treats
+"no file" as "refused," with nothing to distinguish that from a hostile
+attempt — so a page rendered for a `url` your current menu build did not just
+emit is a page that check cannot protect, and a stale one left over from an
+earlier menu is a live, unrefereed link for as long as it sits there. Render
+`pages_dir` fresh from the same payload you are about to return, inside the
+same call that builds it.
+
+**Filenames still need their own containment, independent of the host's.**
+`pages_dir/<url>.html` is a path *you* write to before the host ever reads it,
+so a `url` that survived into your own menu payload with a `..` segment or an
+absolute shape is a traversal risk on your side of the socket before it is
+ever the host's problem — constrain the identifier a `url` is built from (a
+session id, say) to a narrow character class once, the same way you already
+decide what to put in a `url` at all.
+
+### What a socket-transport bird still owes the protocol
+
+Nothing in [§1](#1-the-shape-of-the-protocol) through [§8](#8-liveness-and-unavailability)
+or [§10](#10-lifecycle-quitting-restarting-and-starting) changes: the descriptor is still
+untrusted input, validated the same way; liveness is still PID plus `started`;
+Quit and Restart are still ordinary action ids answered before you exit. Only
+the fields that name *how to reach you* and *how a link resolves* are
+different, and they are exactly the fields this section describes.
+
+---
+
 ## 10. Lifecycle: quitting, restarting, and starting
 
 Birds replaced menu bars that owned the daemon's lifecycle — they started a dead
@@ -654,6 +809,13 @@ for a start button.
 
 ## 11. A bird's checklist
 
+Written for the HTTP transport, since that is still what most of this
+protocol's participants speak and what a bird predating [§9a](#9a-the-unix-socket-and-named-pipe-transport)
+has already implemented. A `unix`/`pipe` bird follows the same shape with the
+substitutions [§9a](#9a-the-unix-socket-and-named-pipe-transport) spells
+out — bind a socket or pipe instead of step 1, render `pages_dir` instead of
+step 6's `Host`/`Origin` guards, and so on; nothing else here changes.
+
 **Startup**
 
 1. Bind a port on `127.0.0.1`.
@@ -698,7 +860,7 @@ for a start button.
 | File | Shows |
 |---|---|
 | [`examples/huginn_bird.py`](examples/huginn_bird.py) | Leading bird: higher priority, badge, token, per-item actions |
-| [`examples/muninn_bird.py`](examples/muninn_bird.py) | Companion bird: lower priority, link-only rows, no token |
+| [`examples/muninn_bird.py`](examples/muninn_bird.py) | Companion bird: lower priority, link-only rows, the `unix` transport end to end ([§9a](#9a-the-unix-socket-and-named-pipe-transport); POSIX only — `pipe` is not exercised here) |
 
 Both are stdlib-only and runnable:
 
@@ -718,7 +880,7 @@ this in an application that already exists":
 | Project | Its bird side |
 |---|---|
 | [Huginn](https://github.com/tohuw/huginn) | [`huginn/bird.py`](https://github.com/tohuw/huginn/blob/master/huginn/bird.py) — authenticated `menu` *and* `action` routes inside an existing FastAPI app, behind the same token gate as the rest of its API |
-| [Muninn](https://github.com/tohuw/muninn) | [`muninn/bird.py`](https://github.com/tohuw/muninn/blob/main/muninn/bird.py) (descriptor and payload) plus [`muninn/birdserve.py`](https://github.com/tohuw/muninn/blob/main/muninn/birdserve.py) (its own loopback listener) — no `token_path`, no `action` endpoint, every row a link |
+| [Muninn](https://github.com/tohuw/muninn) | [`muninn/raven.py`](https://github.com/tohuw/muninn/blob/main/muninn/raven.py) (descriptor and payload) plus [`muninn/ravenserve.py`](https://github.com/tohuw/muninn/blob/main/muninn/ravenserve.py) (its listener) — the `unix`/`pipe` transport of [§9a](#9a-the-unix-socket-and-named-pipe-transport), no `token_path` on POSIX, an authkey `token_path` on Windows, and a `Quit`/`Restart` lifecycle section when its daemon runs it |
 
 Neither is a dependency of Roost and Roost is not a dependency of either. The
 descriptor mechanics [§2](#2-the-descriptor) describes — the state-directory

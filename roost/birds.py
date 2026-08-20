@@ -105,6 +105,35 @@ LEGACY_DIR_POSIX = "ravens"
 
 DESCRIPTOR_SUFFIX = ".json"
 
+# ── Transport ─────────────────────────────────────────────────────────────────
+
+#: A descriptor with no ``transport`` field speaks the original loopback-HTTP
+#: surface. That absence, not a literal ``"http"``, is what most descriptors in
+#: the wild say — Huginn and any bird that has not migrated never learn this
+#: name exists. It is defined so the rest of this module has one spelling to
+#: compare against, not because a bird is expected to write it.
+TRANSPORT_HTTP = "http"
+
+#: POSIX: a Unix domain socket. See docs/specs/021-unix-socket-transport.md in
+#: Muninn's repository — the normative source for this transport, which Roost
+#: implements the client side of.
+TRANSPORT_UNIX = "unix"
+
+#: Windows: a named pipe, since ``socket.AF_UNIX`` does not exist there.
+TRANSPORT_PIPE = "pipe"
+
+_TRANSPORTS = frozenset({TRANSPORT_HTTP, TRANSPORT_UNIX, TRANSPORT_PIPE})
+
+#: The two transports that replace a loopback port with a
+#: ``multiprocessing.connection`` address plus a rendered-pages directory.
+SOCKET_TRANSPORTS = frozenset({TRANSPORT_UNIX, TRANSPORT_PIPE})
+
+#: A socket path, a named-pipe path, or a pages directory is a filesystem path
+#: a bird chose; bounded for the same reason ``token_path`` is — a hostile
+#: descriptor must not be able to aim the host at an unbounded string.
+MAX_ADDRESS_LENGTH = 4096
+MAX_PAGES_DIR_LENGTH = 4096
+
 
 # ── Path resolution ───────────────────────────────────────────────────────────
 
@@ -189,7 +218,9 @@ class BirdDescriptor:
     min_api: int
     max_api: int
     pid: int
-    port: int
+    #: The loopback port for the HTTP transport. ``None`` for a socket
+    #: transport, which names its listener through :attr:`address` instead.
+    port: int | None
     token_path: Path | None
     token_header: str
     endpoints: dict[str, str]
@@ -199,16 +230,39 @@ class BirdDescriptor:
     #: How to ask the OS to start this bird again, if it says. Optional: a
     #: bird predating the field keeps working, and gets no Start row.
     launch: "launcher.LaunchSpec | None" = None
+    #: ``"http"`` when the descriptor omits the field, ``"unix"``, or
+    #: ``"pipe"``. Absence means HTTP — this is the one field whose default
+    #: encodes a whole surface's worth of unchanged behaviour, see
+    #: :data:`TRANSPORT_HTTP`.
+    transport: str = TRANSPORT_HTTP
+    #: A socket path (``unix``) or a named-pipe path (``pipe``). ``None`` on
+    #: the HTTP transport, which uses :attr:`port` instead.
+    address: str | None = None
+    #: Where a socket-transport bird has rendered the static pages its menu
+    #: links point at. ``None`` on the HTTP transport, where a link resolves
+    #: against :attr:`port` instead.
+    pages_dir: Path | None = None
 
     @property
     def api_range(self) -> tuple[int, int]:
         """The inclusive protocol range this descriptor supports."""
         return (self.min_api, self.max_api)
 
+    @property
+    def is_socket_transport(self) -> bool:
+        """True for ``unix``/``pipe`` — everything not the HTTP surface."""
+        return self.transport in SOCKET_TRANSPORTS
+
     def endpoint(self, key: str) -> str | None:
         return self.endpoints.get(key)
 
     def base_url(self) -> str:
+        """The loopback origin for an HTTP-transport bird.
+
+        Meaningless for a socket transport, which has no port — callers must
+        check :attr:`transport` (or :attr:`is_socket_transport`) first, the
+        same way they must for :attr:`port` itself.
+        """
         return f"http://127.0.0.1:{self.port}"
 
 
@@ -291,13 +345,21 @@ def _require_str(raw: object, field_name: str, limit: int) -> str:
     return raw
 
 
-def _validate_endpoints(raw: object) -> dict[str, str]:
-    """Validate the endpoint map. Every value must be a rooted, relative path.
+def _validate_endpoints(raw: object, transport: str) -> dict[str, str]:
+    """Validate the endpoint map.
 
-    An endpoint is joined onto ``http://127.0.0.1:{port}``, so a value carrying a
-    scheme or an authority would redirect the host off the bird it is talking
-    to — the descriptor equivalent of an open redirect. Only ``/``-rooted paths
-    with no ``..`` segment are accepted.
+    On the HTTP transport every value is a rooted, relative path: an endpoint
+    is joined onto ``http://127.0.0.1:{port}``, so a value carrying a scheme or
+    an authority would redirect the host off the bird it is talking to — the
+    descriptor equivalent of an open redirect. Only ``/``-rooted paths with no
+    ``..`` segment are accepted.
+
+    On a socket transport there is no URL space to route on at all (SPEC.md
+    §9a; docs/specs/021-unix-socket-transport.md in Muninn's repository), so a
+    value here is an *op name* sent verbatim as ``{"op": value}`` — the same
+    shape as a raven's ``MENU_OP``/``ACTION_OP`` constants — and is bounded by
+    the same character class as an endpoint key rather than by path rules that
+    would not mean anything for it.
     """
     if raw is None:
         return {}
@@ -309,6 +371,14 @@ def _validate_endpoints(raw: object) -> dict[str, str]:
     for key, value in raw.items():
         if not isinstance(key, str) or not _ENDPOINT_KEY_RE.fullmatch(key):
             raise DescriptorError("endpoint names must match [a-z][a-z0-9_]{0,31}")
+        if transport != TRANSPORT_HTTP:
+            op = _require_str(value, f"endpoints.{key}", MAX_ENDPOINT_PATH_LENGTH)
+            if not _ENDPOINT_KEY_RE.fullmatch(op):
+                raise DescriptorError(
+                    f"endpoints.{key} must be an op name matching [a-z][a-z0-9_]{{0,31}}"
+                )
+            endpoints[key] = op
+            continue
         path = _require_str(value, f"endpoints.{key}", MAX_ENDPOINT_PATH_LENGTH)
         if not path.startswith("/"):
             raise DescriptorError(f"endpoints.{key} must start with '/'")
@@ -357,6 +427,26 @@ def _validate_token_header(raw: object) -> str:
     if not re.fullmatch(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+", text):
         raise DescriptorError("token_header must be a valid HTTP header name")
     return text
+
+
+def _validate_transport(raw: object) -> str:
+    """Return the declared transport, defaulting absence to HTTP.
+
+    ``None`` — the field omitted entirely — is the common case and means the
+    original loopback-HTTP surface, unconditionally: a bird that has never
+    heard of this field must validate exactly as it always has. Anything
+    present must name one of the transports this host actually speaks; an
+    unrecognised string is refused rather than guessed at; guessing is how a
+    typo'd transport would silently fall back to a surface the bird never
+    bound.
+    """
+    if raw is None:
+        return TRANSPORT_HTTP
+    if not isinstance(raw, str) or raw not in _TRANSPORTS:
+        raise DescriptorError(
+            f"transport must be one of {sorted(_TRANSPORTS)}"
+        )
+    return raw
 
 
 def _check_api_range(payload: dict) -> tuple[int, int, int]:
@@ -426,7 +516,27 @@ def parse_descriptor(text: str, path: Path, *, expected_name: str) -> BirdDescri
     )
 
     pid = _require_int(payload.get("pid"), "pid", 1, 2**63 - 1)
-    port = _require_int(payload.get("port"), "port", 1, 65535)
+    transport = _validate_transport(payload.get("transport"))
+
+    if transport == TRANSPORT_HTTP:
+        # Unchanged from every descriptor this host has ever read: a port is
+        # mandatory, and there is no address or pages directory to speak of.
+        port = _require_int(payload.get("port"), "port", 1, 65535)
+        address = None
+        pages_dir = None
+    else:
+        # ``port`` is simply absent from a socket-transport descriptor — see
+        # Muninn's docs/specs/021 — so this branch never looks for it.
+        port = None
+        address = _require_str(
+            payload.get("address"), "address", MAX_ADDRESS_LENGTH
+        )
+        pages_text = _require_str(
+            payload.get("pages_dir"), "pages_dir", MAX_PAGES_DIR_LENGTH
+        )
+        pages_dir = Path(pages_text).expanduser()
+        if not pages_dir.is_absolute():
+            raise DescriptorError("pages_dir must resolve to an absolute path")
 
     started_raw = payload.get("started")
     if started_raw is None:
@@ -469,11 +579,14 @@ def parse_descriptor(text: str, path: Path, *, expected_name: str) -> BirdDescri
         port=port,
         token_path=_validate_token_path(payload.get("token_path"), name),
         token_header=_validate_token_header(payload.get("token_header")),
-        endpoints=_validate_endpoints(payload.get("endpoints")),
+        endpoints=_validate_endpoints(payload.get("endpoints"), transport),
         host_priority=host_priority,
         started=started,
         path=path,
         launch=launch,
+        transport=transport,
+        address=address,
+        pages_dir=pages_dir,
     )
 
 
@@ -706,7 +819,12 @@ class DescriptorDocument:
 
     name: str
     display: str
-    port: int
+    #: Required for the (default) HTTP transport; left ``None`` for a
+    #: socket transport, which is named by ``address``/``pages_dir`` instead.
+    port: int | None = None
+    transport: str = TRANSPORT_HTTP
+    address: str | None = None
+    pages_dir: str | None = None
     pid: int = field(default_factory=os.getpid)
     started: float = field(default_factory=lambda: default_started())
     token_path: str | None = None
@@ -725,11 +843,16 @@ class DescriptorDocument:
             "name": self.name,
             "display": self.display,
             "pid": self.pid,
-            "port": self.port,
             "started": self.started,
             "host_priority": self.host_priority,
             "endpoints": dict(self.endpoints),
         }
+        if self.transport == TRANSPORT_HTTP:
+            payload["port"] = self.port
+        else:
+            payload["transport"] = self.transport
+            payload["address"] = self.address
+            payload["pages_dir"] = self.pages_dir
         if self.token_path:
             payload["token_path"] = self.token_path
         if self.token_header:
