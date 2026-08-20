@@ -1,6 +1,6 @@
 """Tests for the label/log sanitiser.
 
-Everything a raven sends is rendered into a desktop menu and a log file, so this
+Everything a bird sends is rendered into a desktop menu and a log file, so this
 module is the only thing between an attacker-chosen string and a user's screen.
 The cases here are the two real attacks: terminal/log forgery via escapes, and
 menu spoofing via invisible or direction-reversing characters.

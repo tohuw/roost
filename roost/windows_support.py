@@ -4,7 +4,7 @@ What is left here is only what a *status* tray needs: install and remove the two
 Roost shortcuts (login startup and Start Menu), keep the process's environment
 in step with the user's Environment registry values, and start or stop the tray
 process. There are no per-app shortcuts and no icon conversion for them, because
-there are no apps to launch — the ravens are long-running daemons that publish
+there are no apps to launch — the birds are long-running daemons that publish
 descriptors, and the tray reports on them rather than starting them.
 
 Windows-only packages are imported inside functions on purpose, so the shared
@@ -601,7 +601,7 @@ def _read_registry_path() -> str:
 def refresh_user_environment() -> None:
     """Pick up user Environment registry changes without restarting the tray.
 
-    A raven's descriptor directory can be relocated with ``RAVENS_STATE_DIR``. If
+    A bird's descriptor directory can be relocated with ``BIRDS_STATE_DIR``. If
     the user sets that after the tray started, the tray would keep watching the
     old location until the next sign-in, so the value is re-read here.
     """

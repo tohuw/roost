@@ -35,19 +35,19 @@ Roost runs entirely on the local machine and binds only to `127.0.0.1`. Of
 particular interest are:
 
 - Anything that lets a web page or another local process escape the loopback
-  boundary, or that lets Roost be used as a conduit into a raven. A fixed
+  boundary, or that lets Roost be used as a conduit into a bird. A fixed
   loopback port is reachable by any page the user has open, so the help server
   refuses a foreign `Host` and **any** `Origin`, and forwards nothing.
-- **Credential mixing between ravens.** Each raven owns its own token. Anything
-  that could send one raven's credential to another raven's port, cache a token
-  across ravens, or make Roost mint a credential on a raven's behalf.
+- **Credential mixing between birds.** Each bird owns its own token. Anything
+  that could send one bird's credential to another bird's port, cache a token
+  across birds, or make Roost mint a credential on a bird's behalf.
 - **Descriptor handling.** A descriptor is a file written by another process and
   is treated as untrusted input. Anything that lets a descriptor field reach a
   menu, a log, a terminal, or a filesystem path unvalidated — including control
   characters, ANSI escapes, bidirectional overrides, path traversal through a
-  raven name or `token_path`, or a value that redirects a request off the port
+  bird name or `token_path`, or a value that redirects a request off the port
   the descriptor declared.
-- **Unbounded work from a raven.** A raven is a separate process that can hang or
+- **Unbounded work from a bird.** A bird is a separate process that can hang or
   misbehave. Anything that lets it block the menu-build path, return an
   unbounded response, or turn a malformed reply into a crash rather than a
   disabled section with a reason.

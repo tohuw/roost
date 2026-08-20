@@ -21,7 +21,7 @@ Icons are rasterized ahead of time by ``tools/build-icons.sh`` and checked in.
 They are not generated at install time, because ``sips`` is macOS-only and Pillow
 cannot read SVG — there is no cross-platform way to rasterize on demand.
 
-**The raven is a licence obligation, not decoration.** *Raven* by Lorc,
+**The artwork is a licence obligation, not decoration.** *Raven* by Lorc,
 game-icons.net, CC BY 3.0 — see ``assets/CREDITS.md``. Whatever else changes
 here, the attribution ships with the artwork.
 """

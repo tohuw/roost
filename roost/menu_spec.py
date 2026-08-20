@@ -1,9 +1,9 @@
 """Menu-as-data: the declarative menu spec Roost fetches and renders.
 
-Roost renders a raven's menu **without interpreting it**. It draws labels and
-forwards action ids back to the raven that published them. It does not know what
-``focus-session`` means, it does not special-case any raven's id, and it never
-decides what a raven's menu should contain. That rule is what lets a companion
+Roost renders a bird's menu **without interpreting it**. It draws labels and
+forwards action ids back to the bird that published them. It does not know what
+``focus-session`` means, it does not special-case any bird's id, and it never
+decides what a bird's menu should contain. That rule is what lets a companion
 change its own menu with no change here.
 
 The wire shape, fetched from the descriptor's ``menu`` endpoint:
@@ -29,11 +29,11 @@ The wire shape, fetched from the descriptor's ``menu`` endpoint:
     }
 
 Every field is optional except a section's ``items`` and an item's ``label``.
-Unknown fields are dropped rather than rejected: a newer raven inside the
+Unknown fields are dropped rather than rejected: a newer bird inside the
 compatible version range must be able to add a field without disabling itself
 here — the same failure mode huginn issue #38 describes, one layer up.
 
-An item carries either an ``id`` (Roost POSTs it back to the raven's ``action``
+An item carries either an ``id`` (Roost POSTs it back to the bird's ``action``
 endpoint) or a ``url`` (Roost opens ``http://127.0.0.1:{port}{url}`` in the
 browser). An item with neither is inert and renders disabled: a menu entry that
 looks clickable and does nothing is worse than one that admits it.
@@ -45,12 +45,12 @@ import logging
 from dataclasses import dataclass, field
 
 from roost import launcher
-from roost import ravens
+from roost import birds
 from roost import sanitize
 
 log = logging.getLogger(__name__)
 
-#: Bounds on a rendered menu. These are not politeness limits — a raven that
+#: Bounds on a rendered menu. These are not politeness limits — a bird that
 #: returns ten thousand items would hang the menu build inside the AppKit run
 #: loop, which reads to the user as a frozen desktop.
 MAX_SECTIONS = 12
@@ -60,9 +60,9 @@ MAX_DETAIL_LENGTH = 80
 MAX_ACTION_ID_LENGTH = 128
 MAX_URL_LENGTH = 512
 
-#: Styles a raven may request. Roost maps these to its own presentation; a
-#: raven cannot supply arbitrary styling, because that would be interpretation of
-#: raven data by another name.
+#: Styles a bird may request. Roost maps these to its own presentation; a
+#: bird cannot supply arbitrary styling, because that would be interpretation of
+#: bird data by another name.
 STYLES = ("normal", "attention", "muted")
 
 
@@ -85,7 +85,7 @@ class MenuItem:
 
 @dataclass(frozen=True)
 class MenuSection:
-    """A titled group of rows contributed by one raven."""
+    """A titled group of rows contributed by one bird."""
 
     id: str = ""
     title: str = ""
@@ -94,7 +94,7 @@ class MenuSection:
 
 @dataclass(frozen=True)
 class MenuSpec:
-    """A whole raven's menu contribution, already sanitised and bounded."""
+    """A whole bird's menu contribution, already sanitised and bounded."""
 
     title: str = ""
     badge: int = 0
@@ -109,7 +109,7 @@ def _coerce_bool(raw: object, default: bool) -> bool:
     """Return a real bool, treating anything non-bool as the default.
 
     Deliberately not truthiness: ``"false"`` is a non-empty string and would
-    enable an item the raven meant to disable.
+    enable an item the bird meant to disable.
     """
     return raw if isinstance(raw, bool) else default
 
@@ -125,9 +125,9 @@ def _coerce_badge(raw: object) -> int:
 
 
 def _parse_action_id(raw: object) -> str:
-    """Return an action id Roost is willing to send back to the raven.
+    """Return an action id Roost is willing to send back to the bird.
 
-    The id is opaque to Roost — it means whatever the raven says it means —
+    The id is opaque to Roost — it means whatever the bird says it means —
     but it is still put on the wire, so it must not carry control characters or
     exceed a sane length. A rejected id makes the item inert rather than
     dropping the row, so the user sees that something is there and broken.
@@ -142,11 +142,11 @@ def _parse_action_id(raw: object) -> str:
 
 
 def _parse_url(raw: object) -> str:
-    """Return a raven-local URL path, or "" if it is not one.
+    """Return a bird-local URL path, or "" if it is not one.
 
-    Same reasoning as descriptor endpoints: the value is joined onto the raven's
+    Same reasoning as descriptor endpoints: the value is joined onto the bird's
     own loopback origin, so a scheme or an authority would send the user's
-    browser somewhere the raven does not control. Query strings are permitted
+    browser somewhere the bird does not control. Query strings are permitted
     here (unlike in the descriptor) because a menu link legitimately carries
     parameters; a fragment is not, since Roost appends nothing after it.
     """
@@ -218,7 +218,7 @@ def parse_section(raw: object, budget: int) -> tuple[MenuSection | None, int]:
         if item is None:
             continue
         # A separator with nothing before it, or two in a row, is noise the
-        # raven should not be able to use to pad a menu into unusability.
+        # bird should not be able to use to pad a menu into unusability.
         if item.separator and (not items or items[-1].separator):
             continue
         items.append(item)
@@ -246,11 +246,11 @@ def parse_menu(payload: object) -> MenuSpec:
     """Parse a whole menu payload into a bounded, sanitised :class:`MenuSpec`.
 
     Never raises for content reasons. A payload that is entirely unusable yields
-    an empty spec, which the caller renders as a raven that is up but has nothing
-    to say — distinct from a raven that could not be reached at all.
+    an empty spec, which the caller renders as a bird that is up but has nothing
+    to say — distinct from a bird that could not be reached at all.
     """
     if not isinstance(payload, dict):
-        log.debug("Raven menu payload was %s, not an object", type(payload).__name__)
+        log.debug("Bird menu payload was %s, not an object", type(payload).__name__)
         return MenuSpec()
 
     raw_sections = payload.get("sections")
@@ -274,11 +274,11 @@ def parse_menu(payload: object) -> MenuSpec:
 # ── Rendered result ───────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
-class RavenMenu:
-    """What one raven contributes to the menu, available or not.
+class BirdMenu:
+    """What one bird contributes to the menu, available or not.
 
-    ``reason`` is set exactly when the raven could not be rendered. The two
-    fields are never both meaningful: a raven either contributed a spec or it
+    ``reason`` is set exactly when the bird could not be rendered. The two
+    fields are never both meaningful: a bird either contributed a spec or it
     contributed a reason, and the UI branches on ``reason`` alone.
     """
 
@@ -286,8 +286,8 @@ class RavenMenu:
     display: str
     spec: MenuSpec = field(default_factory=MenuSpec)
     reason: str = ""
-    descriptor: "ravens.RavenDescriptor | None" = None
-    #: Set when this raven can be asked to start again. Carried on the menu
+    descriptor: "birds.BirdDescriptor | None" = None
+    #: Set when this bird can be asked to start again. Carried on the menu
     #: rather than looked up at draw time, so what is drawn is what
     #: :meth:`signature` compared.
     launch: "launcher.LaunchSpec | None" = None
@@ -307,7 +307,7 @@ class RavenMenu:
             self.name,
             self.display,
             self.reason,
-            # A raven that becomes startable must redraw, or the row never
+            # A bird that becomes startable must redraw, or the row never
             # appears until something else happens to change.
             bool(self.launch),
             self.spec.title,
@@ -329,11 +329,11 @@ class RavenMenu:
         )
 
 
-def unavailable(raven: "ravens.UnavailableRaven") -> RavenMenu:
-    """Build the disabled-with-a-reason menu for a raven that cannot be used."""
-    return RavenMenu(
-        name=raven.name,
-        display=sanitize.sanitize_label(raven.display) or raven.name or "Unknown raven",
-        reason=sanitize.sanitize_label(raven.reason) or "Unavailable.",
-        launch=raven.launch,
+def unavailable(bird: "birds.UnavailableBird") -> BirdMenu:
+    """Build the disabled-with-a-reason menu for a bird that cannot be used."""
+    return BirdMenu(
+        name=bird.name,
+        display=sanitize.sanitize_label(bird.display) or bird.name or "Unknown bird",
+        reason=sanitize.sanitize_label(bird.reason) or "Unavailable.",
+        launch=bird.launch,
     )

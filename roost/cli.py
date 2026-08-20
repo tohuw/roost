@@ -1,7 +1,7 @@
 """The Roost CLI.
 
 Roost is a status menu bar, not a launcher, so the CLI is small on purpose.
-The ravens start themselves and publish their own descriptors; nothing here
+The birds start themselves and publish their own descriptors; nothing here
 registers, starts, stops, or opens anything on their behalf.
 
 Verbs:
@@ -9,7 +9,7 @@ Verbs:
     install     Set up the venv, the tray's login startup, and the CLI
     uninstall   Remove login startup and CLI integration
     ui          Start the tray
-    ravens      Show what the tray currently sees, and why
+    birds      Show what the tray currently sees, and why
     icon        Show, set, or reset the tray icon
 """
 
@@ -24,7 +24,7 @@ from pathlib import Path
 from roost import app_bundle
 from roost import help_server
 from roost import paths
-from roost import ravens
+from roost import birds
 from roost import sanitize
 from roost import windows_support
 
@@ -44,33 +44,43 @@ LABEL = "com.tohuw.roost"
 COMMAND = "roost"
 
 
-# ── ravens ────────────────────────────────────────────────────────────────────
+# ── birds ────────────────────────────────────────────────────────────────────
 
-def cmd_ravens(args: argparse.Namespace) -> int:
-    """List every raven the tray can see, with the reason for any it cannot use.
+def cmd_birds(args: argparse.Namespace) -> int:
+    """List every bird the tray can see, with the reason for any it cannot use.
 
-    This is the diagnostic that answers "why is my raven not in the menu?", so it
+    This is the diagnostic that answers "why is my bird not in the menu?", so it
     prints the unavailable ones too — with the same reason string the menu shows.
-    A raven that were simply omitted would be indistinguishable from one that was
+    A bird that were simply omitted would be indistinguishable from one that was
     never installed.
     """
-    directory = ravens.state_dir()
-    found = ravens.discover(directory)
+    directory = birds.state_dir()
+    legacy = birds.legacy_state_dir()
+    # Discover across every directory the tray itself reads. Listing only the
+    # current one made this command disagree with the menu — reporting an empty
+    # flock while two birds were being drawn — and a diagnostic that contradicts
+    # the thing it diagnoses is worse than no diagnostic at all.
+    found = birds.discover()
     print(f"Descriptor directory: {directory}")
-    if not directory.is_dir():
-        print("  (does not exist yet — no raven has published a descriptor)")
+    if legacy is not None and legacy.is_dir():
+        print(f"Also reading:         {legacy}")
+        print("  (the name this contract used while it had two participants and")
+        print("   both were ravens; Huginn and Muninn still publish there)")
+    searched = [d for d in (directory, legacy) if d is not None and d.is_dir()]
+    if not searched:
+        print("  (does not exist yet — no bird has published a descriptor)")
         return 0
     if not found:
-        print("  (empty — no raven has published a descriptor)")
+        print("  (empty — no bird has published a descriptor)")
         return 0
     print()
-    for raven in found:
+    for bird in found:
         # The name and reason come from a descriptor, which is untrusted input.
         # sanitize before writing either to a terminal.
-        name = sanitize.safe_for_log(raven.name)
-        display = sanitize.safe_for_log(raven.display)
-        if isinstance(raven, ravens.AvailableRaven):
-            descriptor = raven.descriptor
+        name = sanitize.safe_for_log(bird.name)
+        display = sanitize.safe_for_log(bird.display)
+        if isinstance(bird, birds.AvailableBird):
+            descriptor = bird.descriptor
             print(f"  ● {display} ({name})")
             print(f"      port     {descriptor.port}")
             print(f"      pid      {descriptor.pid}")
@@ -80,7 +90,7 @@ def cmd_ravens(args: argparse.Namespace) -> int:
             print(f"      token    {token}")
         else:
             print(f"  ○ {display} ({name})")
-            print(f"      {sanitize.safe_for_log(raven.reason, 200)}")
+            print(f"      {sanitize.safe_for_log(bird.reason, 200)}")
     return 0
 
 
@@ -261,7 +271,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         cli_dir = REPO / ".venv" / "Scripts"
         if windows_support.remove_cli_dir_from_user_path(cli_dir):
             print(f"Removed from user PATH: {cli_dir}")
-        print("Roost uninstalled. The ravens were not touched.")
+        print("Roost uninstalled. The birds were not touched.")
         return 0
 
     home = Path.home()
@@ -291,7 +301,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     if app_bundle.uninstall():
         print(f"Removed application: {app_bundle.bundle_path()}")
 
-    print("Roost uninstalled. The ravens were not touched.")
+    print("Roost uninstalled. The birds were not touched.")
     return 0
 
 
@@ -357,7 +367,7 @@ def _macos_tray_responding() -> bool:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=COMMAND,
-        description="The shared status menu bar for the ravens.",
+        description="The shared status menu bar for every bird on the machine.",
     )
     sub = parser.add_subparsers(dest="verb", metavar="COMMAND")
 
@@ -367,7 +377,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("uninstall", help="Remove login startup and CLI integration")
     sub.add_parser("ui", help="Start the menu bar or system tray")
-    sub.add_parser("ravens", help="Show what the tray sees, and why")
+    sub.add_parser("birds", help="Show what the tray sees, and why")
 
     return parser
 
@@ -376,7 +386,7 @@ COMMANDS = {
     "install": cmd_install,
     "uninstall": cmd_uninstall,
     "ui": cmd_ui,
-    "ravens": cmd_ravens,
+    "birds": cmd_birds,
 }
 
 

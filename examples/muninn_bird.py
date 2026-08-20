@@ -1,37 +1,37 @@
 #!/usr/bin/env python3
-"""Reference raven: the companion, with a lower priority and no token.
+"""Reference bird: the companion, with a lower priority and no token.
 
 The second worked implementation of ``SPEC.md``, standing in for Muninn — the
 agent-history companion. It is deliberately the *plainer* of the two examples,
 because that is the more useful demonstration: the same contract, a different
-raven, and no coordination between them beyond the shared directory and the
+bird, and no coordination between them beyond the shared directory and the
 declared priority.
 
-Read it against ``huginn_raven.py``. The differences are all things the contract
-permits a raven to decide for itself:
+Read it against ``huginn_bird.py``. The differences are all things the contract
+permits a bird to decide for itself:
 
 - **A lower ``host_priority``**, so Muninn sorts after Huginn when both are
-  present and sorts first — alone — when Huginn is not running. Neither raven
+  present and sorts first — alone — when Huginn is not running. Neither bird
   knows the other exists; the ordering is entirely these two numbers, and
   Roost knows neither name.
-- **No ``token_path``.** Roost never mints a credential on a raven's behalf,
-  so a raven with no token file gets unauthenticated requests. Whether that is
-  acceptable is the raven's decision, and for a read-only history view on
+- **No ``token_path``.** Roost never mints a credential on a bird's behalf,
+  so a bird with no token file gets unauthenticated requests. Whether that is
+  acceptable is the bird's decision, and for a read-only history view on
   loopback it reasonably can be. The ``Host``/``Origin`` checks are *not*
   optional either way — they are what stop a web page reaching this port at all.
 - **Link rows rather than actions.** Every row here opens a page against this
-  raven's own port. A raven that has nothing to be clicked does not need an
+  bird's own port. A bird that has nothing to be clicked does not need an
   action endpoint, and Roost renders it identically.
 - **A section that is sometimes empty.** When there is no history the menu has no
-  sections, and Roost draws the raven with "Nothing to report." — which is
-  visibly different from a raven it could not reach.
+  sections, and Roost draws the bird with "Nothing to report." — which is
+  visibly different from a bird it could not reach.
 
 Documentation, not a library: Roost does not import this, and neither does the
 real Muninn.
 
 Run it:
 
-    python3 examples/muninn_raven.py
+    python3 examples/muninn_bird.py
 """
 
 from __future__ import annotations
@@ -53,13 +53,13 @@ DISPLAY = "Muninn"
 
 #: A range, not a version. Equality is the bug behind huginn issue #38: one
 #: routine bump silently disabled every participant with nothing on screen to
-#: explain it. Widening the window this raven accepts is a one-line change here.
+#: explain it. Widening the window this bird accepts is a one-line change here.
 MIN_API = 1
 MAX_API = 1
 
 #: Lower than Huginn's, so Huginn leads when both are present. This number is the
 #: *only* thing that decides the order; the host has no opinion and no list of
-#: known ravens.
+#: known birds.
 HOST_PRIORITY = 50
 
 MAX_REQUEST_BODY = 64 * 1024
@@ -70,26 +70,26 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 def state_dir() -> Path:
     """Return the shared descriptor directory.
 
-    Byte-for-byte the same rule as ``huginn_raven.state_dir``, and that identity
-    is the point: it is the contract, not either raven's preference. A raven that
+    Byte-for-byte the same rule as ``huginn_bird.state_dir``, and that identity
+    is the point: it is the contract, not either bird's preference. A bird that
     resolves this differently publishes where the host is not looking, and the
     failure is silent — an empty menu with nothing to explain it.
     """
-    override = os.environ.get("RAVENS_STATE_DIR", "").strip()
+    override = os.environ.get("BIRDS_STATE_DIR", "").strip()
     if override:
         return Path(override).expanduser()
     if sys.platform == "win32":
         local = os.environ.get("LOCALAPPDATA", "").strip()
         base = Path(local) if local else Path.home() / "AppData" / "Local"
-        return base / "Ravens"
+        return base / "Birds"
     xdg = os.environ.get("XDG_STATE_HOME", "").strip()
     base = Path(xdg) if xdg else Path.home() / ".local" / "state"
-    return base / "ravens"
+    return base / "birds"
 
 
-# ── This raven's state ────────────────────────────────────────────────────────
+# ── This bird's state ────────────────────────────────────────────────────────
 #
-# Hardcoded on purpose. A real raven reads its own store; Roost cannot tell.
+# Hardcoded on purpose. A real bird reads its own store; Roost cannot tell.
 
 HISTORY = [
     {"id": "h-1", "title": "Deployed staging", "when": "12m ago"},
@@ -99,16 +99,16 @@ HISTORY = [
 
 
 def build_menu() -> dict:
-    """Return this raven's menu contribution.
+    """Return this bird's menu contribution.
 
-    Every row is a link, so this raven needs no action endpoint at all. It still
+    Every row is a link, so this bird needs no action endpoint at all. It still
     declares ``menu`` in its descriptor's endpoints; omitting ``action`` is how a
-    raven says it has nothing to be clicked, and Roost renders the rows the
+    bird says it has nothing to be clicked, and Roost renders the rows the
     same way either way.
     """
     if not HISTORY:
-        # No sections is a legitimate answer. Roost draws the raven with
-        # "Nothing to report." — distinct from a raven it could not reach, which
+        # No sections is a legitimate answer. Roost draws the bird with
+        # "Nothing to report." — distinct from a bird it could not reach, which
         # gets its own reason instead.
         return {"api_version": MAX_API, "title": DISPLAY, "sections": []}
 
@@ -118,7 +118,7 @@ def build_menu() -> dict:
             "detail": entry["when"],
             # Opened as http://127.0.0.1:{port}{url}. The host builds that from
             # the descriptor's own port, so a row cannot navigate the user
-            # anywhere this raven does not itself serve.
+            # anywhere this bird does not itself serve.
             "url": f"/history/{entry['id']}",
             "style": "muted",
         }
@@ -131,7 +131,7 @@ def build_menu() -> dict:
         "api_version": MAX_API,
         "title": DISPLAY,
         # No badge: nothing here wants attention. Omitting it is the same as
-        # zero, and the host sums badges across ravens either way.
+        # zero, and the host sums badges across birds either way.
         "sections": [{"id": "recent", "title": "Recent", "items": items}],
     }
 
@@ -139,12 +139,12 @@ def build_menu() -> dict:
 # ── Descriptor ────────────────────────────────────────────────────────────────
 
 def publish(directory: Path, port: int) -> Path:
-    """Write this raven's descriptor atomically.
+    """Write this bird's descriptor atomically.
 
     Note what is *absent*: no ``token_path`` and no ``token_header``. Roost
     sends an unauthenticated request in that case rather than inventing a
     credential, which is the whole of what "the host never mints a credential on
-    a raven's behalf" means in practice.
+    a bird's behalf" means in practice.
     """
     directory.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -156,7 +156,7 @@ def publish(directory: Path, port: int) -> Path:
         "pid": os.getpid(),
         "port": port,
         # Cross-checked by the host against the OS's record of when this process
-        # began, so a recycled PID cannot pass as a live raven.
+        # began, so a recycled PID cannot pass as a live bird.
         "started": time.time(),
         "host_priority": HOST_PRIORITY,
         "endpoints": {"menu": "/api/menu"},
@@ -177,11 +177,11 @@ def publish(directory: Path, port: int) -> Path:
 
 
 def withdraw(descriptor: Path) -> None:
-    """Remove the descriptor so a stopped raven leaves nothing behind.
+    """Remove the descriptor so a stopped bird leaves nothing behind.
 
     Best-effort. A hard kill skips this, and the host copes: it checks the
     recorded PID before trusting the file, so a stale descriptor renders as "Not
-    running" with a reason rather than as a phantom raven.
+    running" with a reason rather than as a phantom bird.
     """
     try:
         descriptor.unlink(missing_ok=True)
@@ -192,7 +192,7 @@ def withdraw(descriptor: Path) -> None:
 # ── HTTP ──────────────────────────────────────────────────────────────────────
 
 class _Handler(BaseHTTPRequestHandler):
-    """The raven's own API.
+    """The bird's own API.
 
     No token, but the loopback checks still apply. Skipping them because there is
     no credential to steal would be backwards: with no token, ``Host`` and
@@ -241,7 +241,7 @@ class _Handler(BaseHTTPRequestHandler):
             if entry is None:
                 self._json(404, {"error": "not found"})
                 return
-            # The title is this raven's own data, but it is still escaped: a
+            # The title is this bird's own data, but it is still escaped: a
             # renderer that only escapes untrusted input is one refactor away
             # from not escaping at all.
             import html
@@ -255,11 +255,11 @@ class _Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        # This raven publishes no actions, so it accepts none. Answering 405
+        # This bird publishes no actions, so it accepts none. Answering 405
         # rather than silently succeeding keeps a mistaken caller honest.
         if not self._guard():
             return
-        self._json(405, {"error": "this raven publishes no actions"})
+        self._json(405, {"error": "this bird publishes no actions"})
 
     def _json(self, status: int, payload: dict):
         data = json.dumps(payload).encode("utf-8")
@@ -299,7 +299,7 @@ def main() -> int:
     server = _Server(("127.0.0.1", port), _Handler)
 
     # After the bind, never before: a descriptor naming a port that is not yet
-    # listening makes the host report a healthy raven as unreachable.
+    # listening makes the host report a healthy bird as unreachable.
     descriptor = publish(directory, port)
 
     atexit.register(withdraw, descriptor)
@@ -308,7 +308,7 @@ def main() -> int:
 
     print(f"{DISPLAY} listening on http://127.0.0.1:{port}")
     print(f"  descriptor {descriptor}")
-    print("  no token: this raven accepts unauthenticated loopback requests.")
+    print("  no token: this bird accepts unauthenticated loopback requests.")
     print("Ctrl-C to stop.")
     try:
         server.serve_forever()

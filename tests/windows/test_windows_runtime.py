@@ -107,10 +107,10 @@ def test_userprofile_redirects_path_home_in_a_real_child(tmp_path):
 
 
 def test_a_windows_descriptor_directory_resolves_under_localappdata(tmp_path, monkeypatch):
-    """The path rule is the contract both ravens follow, so pin it on the real OS."""
-    from roost import ravens
+    """The path rule is the contract both birds follow, so pin it on the real OS."""
+    from roost import birds
 
-    monkeypatch.delenv("RAVENS_STATE_DIR", raising=False)
+    monkeypatch.delenv("BIRDS_STATE_DIR", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
 
-    assert ravens.state_dir() == tmp_path / "AppData" / "Local" / "Ravens"
+    assert birds.state_dir() == tmp_path / "AppData" / "Local" / "Birds"

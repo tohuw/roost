@@ -12,14 +12,14 @@ called Appistry, which owns ``~/.appistry`` and is still in daily use. Its
 its state somewhere else entirely and never reads or writes anything under
 ``~/.appistry``, so both can run at once on the same account.
 
-The location follows the same platform rule :mod:`roost.ravens` applies to the
+The location follows the same platform rule :mod:`roost.birds` applies to the
 shared descriptor directory, because "put your state where the platform says" is
 not a per-module opinion:
 
 - Windows: ``%LOCALAPPDATA%\\Roost`` (``~\\AppData\\Local\\Roost`` if unset)
 - POSIX: ``$XDG_STATE_HOME/roost``, falling back to ``~/.local/state/roost``
 
-Note the asymmetry with the *ravens* directory: that one is a cross-project
+Note the asymmetry with the *birds* directory: that one is a cross-project
 contract Huginn and Muninn also write to, so its name is fixed and not ours to
 change. This one is private to Roost and sits beside it.
 
@@ -151,7 +151,7 @@ def log_path() -> Path:
 def atomic_write_text(path: Path, text: str) -> None:
     """Write ``text`` to ``path`` owner-only, replacing it atomically.
 
-    A reader — including a second Roost process, or a raven inspecting the host's
+    A reader — including a second Roost process, or a bird inspecting the host's
     state — must never observe a half-written file, so the content is staged in a
     sibling temp file that is chmodded *before* it is moved into place. That
     ordering matters: creating the final file first and chmodding after would

@@ -1,21 +1,21 @@
-"""Lifecycle: a raven's Quit/Restart rows work, and Roost still starts nothing.
+"""Lifecycle: a bird's Quit/Restart rows work, and Roost still starts nothing.
 
 Roost replaced menu bars that owned their daemon's lifecycle, so "add a Start
 button" is the change a future reader is most likely to attempt. This module
 exists to make both halves of the answer executable rather than only written down
 in SPEC.md §10.
 
-**Quit and Restart needed nothing.** They are action ids a raven publishes, and
+**Quit and Restart needed nothing.** They are action ids a bird publishes, and
 the tests below assert Roost cannot tell one from ``focus:abc123`` — same parsing,
 same forwarding, same everything. That indistinguishability *is* the feature: the
 moment Roost recognises ``quit``, it is interpreting a companion's data and owes
-every raven an opinion about what stopping means.
+every bird an opinion about what stopping means.
 
-**Starting a stopped raven is refused by construction, not by policy.** A stopped
-raven has withdrawn its descriptor, so there is no row to click and no port to
+**Starting a stopped bird is refused by construction, not by policy.** A stopped
+bird has withdrawn its descriptor, so there is no row to click and no port to
 call. The tests here pin that Roost holds no mechanism that could be pressed into
 service anyway: no process spawning in the menu path, and no reading of a
-raven-supplied path as something to execute. A test that merely asserted "we do
+bird-supplied path as something to execute. A test that merely asserted "we do
 not currently call Popen" would pass the day someone adds one, so these check the
 menu-building surface as a whole.
 """
@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from roost import host
 from roost import icons
 from roost import menu_spec
-from roost import ravens
+from roost import birds
 from roost import tray
 from roost.tray import RowKind
 
@@ -50,17 +50,17 @@ def _descriptor(name="huginn", **overrides):
         host_priority=0, started=None, path=Path(f"/tmp/{name}.json"),
     )
     values.update(overrides)
-    return ravens.RavenDescriptor(**values)
+    return birds.BirdDescriptor(**values)
 
 
 def _menu_with(*action_ids, name="huginn"):
-    """A raven menu offering one row per given action id."""
+    """A bird menu offering one row per given action id."""
     items = tuple(
         menu_spec.MenuItem(label=f"Row {action_id}", action_id=action_id)
         for action_id in action_ids
     )
     spec = menu_spec.MenuSpec(sections=(menu_spec.MenuSection(id="lifecycle", items=items),))
-    return menu_spec.RavenMenu(
+    return menu_spec.BirdMenu(
         name=name, display=name.title(), spec=spec, descriptor=_descriptor(name),
     )
 
@@ -85,8 +85,8 @@ class TestLifecycleRowsAreOrdinary:
         If a change ever makes these differ, Roost has started interpreting the
         id — which is the rule in AGENTS.md that this asserts.
         """
-        quit_rows = tray.raven_rows(_menu_with("quit"))
-        focus_rows = tray.raven_rows(_menu_with("focus:abc123"))
+        quit_rows = tray.bird_rows(_menu_with("quit"))
+        focus_rows = tray.bird_rows(_menu_with("focus:abc123"))
 
         assert [row.kind for row in quit_rows] == [row.kind for row in focus_rows]
         assert [row.enabled for row in quit_rows] == [row.enabled for row in focus_rows]
@@ -95,7 +95,7 @@ class TestLifecycleRowsAreOrdinary:
         """``host.activate`` hands the id back; it does not signal anything itself."""
         sent = []
         monkeypatch.setattr(
-            host.raven_client, "send_action",
+            host.bird_client, "send_action",
             lambda descriptor, action_id, **kw: sent.append((descriptor.name, action_id)),
         )
         menu = _menu_with("quit")
@@ -103,51 +103,51 @@ class TestLifecycleRowsAreOrdinary:
 
         returned = host.activate(menu, item)
 
-        # Forwarded verbatim to the raven that published it, and no URL to open.
+        # Forwarded verbatim to the bird that published it, and no URL to open.
         assert sent == [("huginn", "quit")]
         assert returned is None
 
-    def test_a_raven_that_dies_mid_action_is_not_an_error_the_menu_shows(self, monkeypatch):
+    def test_a_bird_that_dies_mid_action_is_not_an_error_the_menu_shows(self, monkeypatch):
         """A quit that drops the connection must degrade, not raise.
 
-        The raven is supposed to answer before exiting (SPEC.md §10), but one that
+        The bird is supposed to answer before exiting (SPEC.md §10), but one that
         gets it wrong is the *expected* failure here, and it happens on the UI
         thread. It has to come back as a logged warning, not an exception.
         """
         def die(descriptor, action_id, **kw):
-            raise host.raven_client.RavenRequestError("Is not answering on its recorded port.")
+            raise host.bird_client.BirdRequestError("Is not answering on its recorded port.")
 
-        monkeypatch.setattr(host.raven_client, "send_action", die)
+        monkeypatch.setattr(host.bird_client, "send_action", die)
         menu = _menu_with("quit")
 
         # No exception, and nothing for the caller to open.
         assert host.activate(menu, menu.spec.sections[0].items[0]) is None
 
-    def test_the_menu_survives_a_raven_that_quit_between_draw_and_click(self, monkeypatch):
-        """The ordinary race: the row was drawn, then the raven stopped."""
+    def test_the_menu_survives_a_bird_that_quit_between_draw_and_click(self, monkeypatch):
+        """The ordinary race: the row was drawn, then the bird stopped."""
         monkeypatch.setattr(
-            host.raven_client, "send_action",
+            host.bird_client, "send_action",
             lambda *a, **kw: (_ for _ in ()).throw(
-                host.raven_client.RavenRequestError("Not running.")),
+                host.bird_client.BirdRequestError("Not running.")),
         )
         menu = _menu_with("restart")
 
         assert host.activate(menu, menu.spec.sections[0].items[0]) is None
 
 
-# ── No raven-supplied string is ever a name to special-case ───────────────────
+# ── No bird-supplied string is ever a name to special-case ───────────────────
 
 class TestNoLifecycleVocabulary:
-    """Roost must hold no list of lifecycle ids, the way it holds no raven names."""
+    """Roost must hold no list of lifecycle ids, the way it holds no bird names."""
 
-    @pytest.mark.parametrize("module", [tray, host, menu_spec, ravens])
+    @pytest.mark.parametrize("module", [tray, host, menu_spec, birds])
     def test_no_module_names_a_lifecycle_action(self, module):
         """Grepping the source, in the spirit of the existing no-hardcoding test.
 
         The reserved-word list this guards against is the tempting shortcut: a
-        host that knows ``quit`` means stop could grey the row out while the raven
+        host that knows ``quit`` means stop could grey the row out while the bird
         is unreachable, or confirm before sending. Both are interpretation, and
-        both would make one raven's vocabulary load-bearing for every raven.
+        both would make one bird's vocabulary load-bearing for every bird.
         """
         source = Path(module.__file__).read_text(encoding="utf-8")
         tree = ast.parse(source)
@@ -157,35 +157,35 @@ class TestNoLifecycleVocabulary:
             if isinstance(node, ast.Constant) and isinstance(node.value, str)
         }
         for reserved in ("quit", "restart", "shutdown"):
-            # Roost's *own* Quit row is a host action, not a raven id, and lives
+            # Roost's *own* Quit row is a host action, not a bird id, and lives
             # in tray.py as "quit". Allow it there and nowhere else, since that
             # one never leaves the host.
             if module is tray and reserved == "quit":
                 continue
             assert reserved not in literals, f"{module.__name__} names {reserved!r}"
 
-    def test_roosts_own_quit_row_is_not_a_raven_action(self):
+    def test_roosts_own_quit_row_is_not_a_bird_action(self):
         """Roost's ``Quit Roost`` is a HOST row and closes only the tray.
 
-        Worth pinning because the two now look similar in the menu: a raven may
+        Worth pinning because the two now look similar in the menu: a bird may
         publish ``Quit Huginn`` right above Roost's own ``Quit Roost``. They must
         stay different *kinds* of row, or clicking one would do the other's job.
         """
         rows = tray.build_rows(host.MenuModel((_menu_with("quit"),)))
         host_quit = [r for r in rows if r.kind is RowKind.HOST and r.action == "quit"]
-        raven_quit = [r for r in rows if r.kind is RowKind.ITEM]
+        bird_quit = [r for r in rows if r.kind is RowKind.ITEM]
 
         assert len(host_quit) == 1
         assert host_quit[0].label == tray.QUIT_LABEL
-        # The raven's row carries its item and its raven name; Roost's carries
+        # The bird's row carries its item and its bird name; Roost's carries
         # neither, because it is never forwarded anywhere.
-        assert host_quit[0].raven == ""
+        assert host_quit[0].bird == ""
         assert host_quit[0].item is None
-        assert len(raven_quit) == 1
-        assert raven_quit[0].raven == "huginn"
+        assert len(bird_quit) == 1
+        assert bird_quit[0].bird == "huginn"
 
 
-# ── Roost cannot start a stopped raven ────────────────────────────────────────
+# ── Roost cannot start a stopped bird ────────────────────────────────────────
 
 class TestRoostStartsNothing:
     """The half of SPEC.md §10 that is a refusal.
@@ -193,26 +193,26 @@ class TestRoostStartsNothing:
     These are the tests that fail if someone implements a Start button.
     """
 
-    def test_a_stopped_raven_offers_no_rows_at_all(self, tmp_path):
+    def test_a_stopped_bird_offers_no_rows_at_all(self, tmp_path):
         """With no descriptor there is nothing to render, let alone to click.
 
         This is the whole design problem in one assertion: the reason Roost has no
-        Start action is that a stopped raven is not a raven Roost can see.
+        Start action is that a stopped bird is not a bird Roost can see.
         """
         model = host.build_model(tmp_path)
 
         assert model.menus == ()
         rows = tray.build_rows(model)
-        assert tray.NO_RAVENS_LABEL in [
+        assert tray.NO_BIRDS_LABEL in [
             row.label for row in rows if row.kind is RowKind.REASON
         ]
-        # Nothing clickable is offered for the raven that is not there.
+        # Nothing clickable is offered for the bird that is not there.
         assert not [row for row in rows if row.kind is RowKind.ITEM]
 
-    def test_an_unavailable_raven_gets_a_reason_and_no_action(self, tmp_path):
-        """A crashed raven's stale descriptor is a reason, never a restart offer.
+    def test_an_unavailable_bird_gets_a_reason_and_no_action(self, tmp_path):
+        """A crashed bird's stale descriptor is a reason, never a restart offer.
 
-        A dead PID is the one case where Roost *does* know a raven's name and port
+        A dead PID is the one case where Roost *does* know a bird's name and port
         — which makes it the tempting place to offer "start it again". It stays
         inert: the descriptor is evidence about the past, and the process it names
         is gone.
@@ -241,14 +241,14 @@ class TestRoostStartsNothing:
         it holds for an indirect call too. Scoped to the menu path because
         ``cli.py`` legitimately runs ``launchctl`` to install Roost's *own* login
         agent, and ``menubar.py`` runs ``osascript``/``zsh`` for notifications and
-        environment — neither is a raven's lifecycle.
+        environment — neither is a bird's lifecycle.
         """
         def forbidden(*args, **kwargs):
             raise AssertionError(f"the menu path must not spawn: {args!r}")
 
         for name in ("Popen", "run", "call", "check_call", "check_output"):
             monkeypatch.setattr(subprocess, name, forbidden)
-        monkeypatch.setattr(host.raven_client, "send_action", lambda *a, **kw: {"ok": True})
+        monkeypatch.setattr(host.bird_client, "send_action", lambda *a, **kw: {"ok": True})
 
         model = host.build_model(tmp_path)
         tray.build_rows(model)
@@ -263,7 +263,7 @@ class TestRoostStartsNothing:
         supervisor identifier that the OS resolves to a command out of its own
         store, so the parsed type still has nowhere to put a program.
         """
-        fields = set(ravens.RavenDescriptor.__dataclass_fields__)
+        fields = set(birds.BirdDescriptor.__dataclass_fields__)
 
         for executable_ish in ("python", "repo", "command", "argv", "exec",
                                "program", "interpreter"):
@@ -285,7 +285,7 @@ class TestRoostStartsNothing:
                 launcher.parse({"kind": "launchd", "id": smuggled})
 
     def test_an_extra_command_field_in_a_descriptor_is_dropped(self, tmp_path):
-        """A raven that *tries* to hand Roost a command gets it ignored.
+        """A bird that *tries* to hand Roost a command gets it ignored.
 
         Unknown fields are dropped rather than refused (that is what keeps the
         protocol additive), so the guarantee is that dropping is what happens —
@@ -300,7 +300,7 @@ class TestRoostStartsNothing:
         path = tmp_path / "huginn.json"
         path.write_text(raw, encoding="utf-8")
 
-        descriptor = ravens.parse_descriptor(raw, path, expected_name="huginn")
+        descriptor = birds.parse_descriptor(raw, path, expected_name="huginn")
 
         assert not hasattr(descriptor, "python")
         assert not hasattr(descriptor, "start_command")
@@ -321,7 +321,7 @@ class TestRoostStartsNothing:
         ) % __import__("os").getpid()
         path = tmp_path / "huginn.json"
 
-        descriptor = ravens.parse_descriptor(raw, path, expected_name="huginn")
+        descriptor = birds.parse_descriptor(raw, path, expected_name="huginn")
 
         # Accepted, because an unknown key must not break an older host — but it
         # is a URL path, and the only thing Roost can do with it is fetch it.
@@ -336,8 +336,8 @@ class TestRoostStartsNothing:
                 '{"api_version": 1, "name": "huginn", "pid": 1, "port": 47100,'
                 ' "endpoints": {"start": %s}}'
             ) % __import__("json").dumps(value)
-            with pytest.raises(ravens.DescriptorError):
-                ravens.parse_descriptor(raw, tmp_path / "huginn.json",
+            with pytest.raises(birds.DescriptorError):
+                birds.parse_descriptor(raw, tmp_path / "huginn.json",
                                         expected_name="huginn")
 
 
@@ -346,10 +346,10 @@ class TestRoostStartsNothing:
 def test_lifecycle_needed_no_version_bump():
     """Adding lifecycle rows must not have moved Roost's advertised window.
 
-    The point of the exercise: a raven publishing a Quit row is publishing an
+    The point of the exercise: a bird publishing a Quit row is publishing an
     ordinary action id, so an older host renders it correctly without being told
     anything. Had it been spelled as a field the host must recognise, every host
     below the bump would have needed updating — huginn issue #38's failure mode,
     which is why compatibility is a range here in the first place.
     """
-    assert (ravens.MIN_API_VERSION, ravens.API_VERSION) == (1, 1)
+    assert (birds.MIN_API_VERSION, birds.API_VERSION) == (1, 1)

@@ -2,9 +2,9 @@
 
 This module is only the rumps/AppKit rendering of :mod:`tray`'s rows. It decides
 nothing about what the menu contains: it walks the rows, makes an ``NSMenuItem``
-per row, and forwards clicks. Every question of *what* to show — which ravens,
+per row, and forwards clicks. Every question of *what* to show — which birds,
 in what order, with which labels, and which of them are unusable and why — is
-answered by :mod:`ravens`, :mod:`menu_spec`, :mod:`host`, and :mod:`tray`, all of
+answered by :mod:`birds`, :mod:`menu_spec`, :mod:`host`, and :mod:`tray`, all of
 which are platform-neutral and shared with the Windows tray.
 
 Keeping it that thin is the point. The previous design in this repository had
@@ -83,9 +83,9 @@ from roost.tray import RowKind
 
 log = logging.getLogger(__name__)
 
-#: How often the menu is rebuilt from the ravens' descriptors and menus. Each
-#: poll makes one bounded HTTP call per live raven, so this is also the rate at
-#: which a raven's status can go stale on screen.
+#: How often the menu is rebuilt from the birds' descriptors and menus. Each
+#: poll makes one bounded HTTP call per live bird, so this is also the rate at
+#: which a bird's status can go stale on screen.
 POLL_SECONDS = 5
 
 _ZSHENV_PATH = Path.home() / ".zshenv"
@@ -96,9 +96,9 @@ _zshenv_managed_keys: set[str] = set()
 # ── Environment bootstrap ─────────────────────────────────────────────────────
 # launchd does not source shell init files, so variables set in ~/.zshenv are
 # invisible to this process. Roost itself needs almost nothing from them, but
-# a raven's descriptor directory can be relocated with RAVENS_STATE_DIR, and a
+# a bird's descriptor directory can be relocated with BIRDS_STATE_DIR, and a
 # user who sets that in ~/.zshenv would otherwise find the tray looking in a
-# different place than the raven publishes to.
+# different place than the bird publishes to.
 
 def _source_zshenv() -> dict[str, str]:
     if not _IS_MACOS:
@@ -109,7 +109,7 @@ def _source_zshenv() -> dict[str, str]:
         # odd byte is enough -- and the failure mode was quiet and total: the
         # decode raises inside run(), the blanket except below swallows it, and
         # the tray silently proceeds with *no* inherited environment at all,
-        # including the RAVENS_STATE_DIR this function exists to find.
+        # including the BIRDS_STATE_DIR this function exists to find.
         result = subprocess.run(
             ["zsh", "-c", "source ~/.zshenv 2>/dev/null; env -0"],
             capture_output=True, timeout=5,
@@ -162,10 +162,10 @@ def refresh_zshenv() -> None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def notify(title: str, message: str) -> None:
-    """Fire a macOS notification, escaping text that came from a raven.
+    """Fire a macOS notification, escaping text that came from a bird.
 
     The message is interpolated into an AppleScript source string, so a quote or
-    backslash in it would otherwise terminate the literal and let raven-supplied
+    backslash in it would otherwise terminate the literal and let bird-supplied
     text become script. It is sanitised first (control characters cannot reach
     here) and then escaped for the literal.
     """
@@ -189,7 +189,7 @@ def _icon_kwargs() -> dict:
     choice = icons.resolve()
     if choice is None:
         log.warning("No tray icon could be resolved; falling back to a title")
-        return {"title": "Ravens"}
+        return {"title": "Birds"}
     return {"icon": str(choice.path), "template": choice.template}
 
 
@@ -232,22 +232,22 @@ class RoostApp(rumps.App):
         elif row.kind is RowKind.HOST:
             item.set_callback(self._make_host_action(row.action))
         else:
-            # A raven name, a section title, a reason, or an item the raven
+            # A bird name, a section title, a reason, or an item the bird
             # marked unavailable. Deliberately inert: a row that looks clickable
             # and does nothing is worse than one that admits it is not.
             item.set_callback(None)
         return item
 
     def _make_activate(self, row: tray.Row):
-        """Return a callback that hands one clicked row back to its own raven."""
+        """Return a callback that hands one clicked row back to its own bird."""
         def activate(_sender):
-            menu = self._model.find(row.raven)
+            menu = self._model.find(row.bird)
             if menu is None or row.item is None:
                 return
             url = host.activate(menu, row.item)
             if url:
                 webbrowser.open(url)
-            # A click can change what the raven wants to show, so rebuild rather
+            # A click can change what the bird wants to show, so rebuild rather
             # than waiting out the poll interval.
             self._build_menu()
         return activate
@@ -263,13 +263,13 @@ class RoostApp(rumps.App):
         elif action == "quit":
             self._quit()
         elif action.startswith("start:"):
-            self._start_raven(action[len("start:"):])
+            self._start_bird(action[len("start:"):])
 
-    def _start_raven(self, name: str) -> None:
-        """Ask the supervisor to start a stopped raven, then refresh.
+    def _start_bird(self, name: str) -> None:
+        """Ask the supervisor to start a stopped bird, then refresh.
 
         The refresh is unconditional: the supervisor returning 0 means it
-        accepted the request, not that the raven is up. Its descriptor is what
+        accepted the request, not that the bird is up. Its descriptor is what
         proves that, and the next poll reads it.
         """
         spec = self._model.launch_spec(name)
@@ -299,7 +299,7 @@ class RoostApp(rumps.App):
 
     @rumps.timer(POLL_SECONDS)
     def _poll(self, _sender):
-        """Refresh the menu from the ravens, skipping an unchanged rebuild."""
+        """Refresh the menu from the birds, skipping an unchanged rebuild."""
         try:
             refresh_zshenv()
             model = host.build_model()

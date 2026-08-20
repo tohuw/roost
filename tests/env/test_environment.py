@@ -178,12 +178,12 @@ def test_core_imports():
     )
 
 
-def test_the_shared_raven_layer_imports():
+def test_the_shared_bird_layer_imports():
     """Every module both trays depend on must import with no display present."""
     result = subprocess.run(
         [str(VENV_PYTHON), "-c",
          "import sys; sys.path.insert(0, '.'); "
-         "from roost import ravens, menu_spec, raven_client, host, icons, "
+         "from roost import birds, menu_spec, bird_client, host, icons, "
          "paths, sanitize, tray, help_server"],
         capture_output=True, text=True, cwd=str(APP_DIR),
     )
@@ -228,12 +228,12 @@ def test_cli_help_exits_zero():
     assert result.returncode == 0, result.stderr.strip()
 
 
-def test_cli_ravens_exits_without_crash(tmp_path):
+def test_cli_birds_exits_without_crash(tmp_path):
     """An empty (or absent) descriptor directory is a valid, reportable state."""
     env = _isolated_process_env(tmp_path)
-    env["RAVENS_STATE_DIR"] = str(tmp_path / "ravens")
+    env["BIRDS_STATE_DIR"] = str(tmp_path / "birds")
     result = subprocess.run(
-        [str(VENV_PYTHON), "-m", "roost.cli", "ravens"],
+        [str(VENV_PYTHON), "-m", "roost.cli", "birds"],
         capture_output=True, text=True, cwd=str(APP_DIR), env=env,
     )
     assert result.returncode == 0, result.stderr.strip()

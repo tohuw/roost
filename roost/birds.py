@@ -1,25 +1,25 @@
-"""Raven descriptor discovery, validation, and liveness.
+"""Bird descriptor discovery, validation, and liveness.
 
-A *raven* is a long-running local daemon that reports status into one shared
-desktop menu. Each raven self-publishes a small JSON **descriptor** into a
+A *bird* is a long-running local daemon that reports status into one shared
+desktop menu. Each bird self-publishes a small JSON **descriptor** into a
 well-known directory; Roost reads those files and renders what it finds. There
-is no central registry the ravens write through, so a raven that is not running
-simply has no descriptor, and no raven can corrupt another's entry.
+is no central registry the birds write through, so a bird that is not running
+simply has no descriptor, and no bird can corrupt another's entry.
 
 Two properties drive every design choice in this module:
 
 **A descriptor is untrusted input.** It is a file written by another process. It
 is never ``eval``'d, never trusted to be well-typed, and never trusted to be
 truthful about its own name. Every field is range- and type-checked, and a file
-that fails any check yields an :class:`UnavailableRaven` carrying a
+that fails any check yields an :class:`UnavailableBird` carrying a
 human-readable reason — never an exception that reaches the menu loop, and never
 a partially-populated descriptor that later code has to re-validate.
 
 **Version compatibility is a range, not an equality.** Roost advertises the
-inclusive window ``MIN_API_VERSION..API_VERSION`` and accepts any raven whose own
+inclusive window ``MIN_API_VERSION..API_VERSION`` and accepts any bird whose own
 declared window overlaps it. An exact ``!=`` comparison is the bug behind
 huginn issue #38: a routine version bump silently disabled every participant,
-with nothing on screen to say why. Here a genuinely incompatible raven is
+with nothing on screen to say why. Here a genuinely incompatible bird is
 reported as unavailable *with its declared range in the reason*, so the failure
 is loud.
 """
@@ -43,14 +43,14 @@ log = logging.getLogger(__name__)
 
 # ── Protocol version ──────────────────────────────────────────────────────────
 
-#: The raven protocol version Roost implements.
+#: The bird protocol version Roost implements.
 API_VERSION = 1
 
 #: The oldest protocol version Roost still speaks. Roost advertises the
-#: inclusive range MIN_API_VERSION..API_VERSION and accepts any raven whose own
+#: inclusive range MIN_API_VERSION..API_VERSION and accepts any bird whose own
 #: declared range overlaps it (huginn issue #38 — exact match silently disabled
 #: every participant on a bump). Widening support is a one-line change here; a
-#: genuinely breaking change raises MIN_API_VERSION and stale ravens are then
+#: genuinely breaking change raises MIN_API_VERSION and stale birds are then
 #: refused loudly, on purpose.
 MIN_API_VERSION = 1
 
@@ -74,7 +74,7 @@ MAX_ENDPOINT_PATH_LENGTH = 256
 MAX_NAME_LENGTH = 32
 MAX_DISPLAY_LENGTH = 64
 
-#: A raven name becomes a descriptor filename and appears in log lines, so it is
+#: A bird name becomes a descriptor filename and appears in log lines, so it is
 #: restricted to a slug with no path separators, dots, or case ambiguity.
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 
@@ -82,43 +82,85 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 _ENDPOINT_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
 #: Environment override for the descriptor directory. Documented in SPEC.md so a
-#: raven and the host can be pointed at the same alternate location (a test
+#: bird and the host can be pointed at the same alternate location (a test
 #: harness, or a user who relocates state wholesale).
-STATE_DIR_ENV = "RAVENS_STATE_DIR"
+STATE_DIR_ENV = "BIRDS_STATE_DIR"
+
+#: The same override under the name it carried when the flock was two ravens
+#: rather than an open set of birds. Still honored, but *after* the current
+#: name — see :func:`state_dir`.
+LEGACY_STATE_DIR_ENV = "RAVENS_STATE_DIR"
+
+#: The descriptor directory as it was named when this protocol had exactly two
+#: participants and both were ravens. Huginn and Muninn publish here today: they
+#: resolve the directory through the ``corvidae`` package, not through Roost, so
+#: they will keep publishing here until that package is next released.
+#:
+#: Roost therefore **reads both** directories — see :func:`discover` — which is
+#: what makes renaming the vocabulary cost no consumer an outage and requires no
+#: commit in either raven's repository. Nothing writes here. When corvidae moves,
+#: this becomes dead weight and can go; until then, removing it empties the menu.
+LEGACY_DIR_WINDOWS = "Ravens"
+LEGACY_DIR_POSIX = "ravens"
 
 DESCRIPTOR_SUFFIX = ".json"
 
 
 # ── Path resolution ───────────────────────────────────────────────────────────
 
+def _state_dir_named(windows_name: str, posix_name: str) -> Path:
+    """Resolve the shared descriptor directory under a given pair of names."""
+    if _IS_WINDOWS:
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        base = Path(local) if local else Path.home() / "AppData" / "Local"
+        return base / windows_name
+    xdg = os.environ.get("XDG_STATE_HOME", "").strip()
+    base = Path(xdg) if xdg else Path.home() / ".local" / "state"
+    return base / posix_name
+
+
 def state_dir() -> Path:
-    """Return the directory ravens publish their descriptors into.
+    """Return the directory birds publish their descriptors into.
 
     Resolution order:
 
-    1. ``$RAVENS_STATE_DIR`` if set and non-empty.
-    2. Windows: ``%LOCALAPPDATA%\\Ravens`` (falling back to
-       ``~\\AppData\\Local\\Ravens`` when ``LOCALAPPDATA`` is unset).
-    3. POSIX: ``$XDG_STATE_HOME/ravens``, falling back to
-       ``~/.local/state/ravens``.
+    1. ``$BIRDS_STATE_DIR`` if set and non-empty.
+    2. ``$RAVENS_STATE_DIR`` if set and non-empty — the same override under its
+       former name, so a machine that already relocated its state keeps working.
+    3. Windows: ``%LOCALAPPDATA%\\Birds`` (falling back to
+       ``~\\AppData\\Local\\Birds`` when ``LOCALAPPDATA`` is unset).
+    4. POSIX: ``$XDG_STATE_HOME/birds``, falling back to
+       ``~/.local/state/birds``.
 
-    This one rule is the contract both ravens follow. Hardcoding a POSIX path —
+    This one rule is the contract every bird follows. Hardcoding a POSIX path —
     as the original proposal did — breaks Windows outright and ignores an
     ``XDG_STATE_HOME`` the user deliberately set. Note that honoring
     ``XDG_STATE_HOME`` is *not* optional here even though huginn's own state
     directory ignores it: that asymmetry is huginn's, and replicating it would
-    put the shared directory somewhere neither raven expects.
+    put the shared directory somewhere no bird expects.
+
+    This is where a bird **writes**. It is not the whole of where Roost
+    **reads** — :func:`legacy_state_dir` is read too.
     """
-    override = os.environ.get(STATE_DIR_ENV, "").strip()
-    if override:
-        return Path(override).expanduser()
-    if _IS_WINDOWS:
-        local = os.environ.get("LOCALAPPDATA", "").strip()
-        base = Path(local) if local else Path.home() / "AppData" / "Local"
-        return base / "Ravens"
-    xdg = os.environ.get("XDG_STATE_HOME", "").strip()
-    base = Path(xdg) if xdg else Path.home() / ".local" / "state"
-    return base / "ravens"
+    for env in (STATE_DIR_ENV, LEGACY_STATE_DIR_ENV):
+        override = os.environ.get(env, "").strip()
+        if override:
+            return Path(override).expanduser()
+    return _state_dir_named("Birds", "birds")
+
+
+def legacy_state_dir() -> Path | None:
+    """The pre-rename descriptor directory, or ``None`` when it is not in play.
+
+    ``None`` when an explicit override is set — an override names *the* directory
+    and quietly reading a second one behind the user's back would defeat the
+    point of setting it, which matters most in a test harness pointed at a
+    scratch directory.
+    """
+    for env in (STATE_DIR_ENV, LEGACY_STATE_DIR_ENV):
+        if os.environ.get(env, "").strip():
+            return None
+    return _state_dir_named(LEGACY_DIR_WINDOWS, LEGACY_DIR_POSIX)
 
 
 def descriptor_path(name: str) -> Path:
@@ -129,7 +171,7 @@ def descriptor_path(name: str) -> Path:
     """
     if not _NAME_RE.fullmatch(name or ""):
         raise ValueError(
-            f"Raven name {name!r} must match [a-z0-9][a-z0-9-]{{0,31}}"
+            f"Bird name {name!r} must match [a-z0-9][a-z0-9-]{{0,31}}"
         )
     base = state_dir()
     return base / f"{name}{DESCRIPTOR_SUFFIX}"
@@ -138,8 +180,8 @@ def descriptor_path(name: str) -> Path:
 # ── Result types ──────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
-class RavenDescriptor:
-    """A validated raven descriptor. Every field here has already been checked."""
+class BirdDescriptor:
+    """A validated bird descriptor. Every field here has already been checked."""
 
     name: str
     display: str
@@ -154,8 +196,8 @@ class RavenDescriptor:
     host_priority: int
     started: float | None
     path: Path
-    #: How to ask the OS to start this raven again, if it says. Optional: a
-    #: raven predating the field keeps working, and gets no Start row.
+    #: How to ask the OS to start this bird again, if it says. Optional: a
+    #: bird predating the field keeps working, and gets no Start row.
     launch: "launcher.LaunchSpec | None" = None
 
     @property
@@ -171,11 +213,11 @@ class RavenDescriptor:
 
 
 @dataclass(frozen=True)
-class UnavailableRaven:
-    """A raven Roost knows about but cannot use, and why.
+class UnavailableBird:
+    """A bird Roost knows about but cannot use, and why.
 
     This is a first-class result, not an error path. An unreachable, stale, or
-    malformed raven must render as a disabled section with a visible reason —
+    malformed bird must render as a disabled section with a visible reason —
     never as a crash, never as a silent omission, and never as "trusted".
     """
 
@@ -184,7 +226,7 @@ class UnavailableRaven:
     reason: str
     path: Path | None = None
     #: Present when the descriptor parsed far enough to say how to restart it.
-    #: A raven that is *gone* is exactly the one worth offering to start, so
+    #: A bird that is *gone* is exactly the one worth offering to start, so
     #: this must survive the liveness check that made it unavailable.
     launch: "launcher.LaunchSpec | None" = None
 
@@ -194,10 +236,10 @@ class UnavailableRaven:
 
 
 @dataclass(frozen=True)
-class AvailableRaven:
-    """A raven whose descriptor validated and whose process is alive."""
+class AvailableBird:
+    """A bird whose descriptor validated and whose process is alive."""
 
-    descriptor: RavenDescriptor
+    descriptor: BirdDescriptor
 
     @property
     def available(self) -> bool:
@@ -212,7 +254,7 @@ class AvailableRaven:
         return self.descriptor.display
 
 
-Raven = AvailableRaven | UnavailableRaven
+Bird = AvailableBird | UnavailableBird
 
 
 # ── Field validators ──────────────────────────────────────────────────────────
@@ -253,7 +295,7 @@ def _validate_endpoints(raw: object) -> dict[str, str]:
     """Validate the endpoint map. Every value must be a rooted, relative path.
 
     An endpoint is joined onto ``http://127.0.0.1:{port}``, so a value carrying a
-    scheme or an authority would redirect the host off the raven it is talking
+    scheme or an authority would redirect the host off the bird it is talking
     to — the descriptor equivalent of an open redirect. Only ``/``-rooted paths
     with no ``..`` segment are accepted.
     """
@@ -273,7 +315,7 @@ def _validate_endpoints(raw: object) -> dict[str, str]:
         if path[1:2] in ("/", "\\"):
             # "//host/path" is a scheme-relative URL, not a local path, and some
             # URL parsers treat a leading "/\" the same way — both would point
-            # the host at a different origin than the raven it is talking to.
+            # the host at a different origin than the bird it is talking to.
             raise DescriptorError(f"endpoints.{key} must not start with '//' or '/\\'")
         if ".." in path.split("/"):
             raise DescriptorError(f"endpoints.{key} must not contain '..'")
@@ -287,9 +329,9 @@ def _validate_token_path(raw: object, name: str) -> Path | None:
     """Validate a descriptor's ``token_path`` without reading the token.
 
     The path is only checked for *shape* here; whether a token can actually be
-    read is decided at request time, because a raven may rotate its token at any
-    moment. Roost never mints a credential on a raven's behalf, so a missing
-    token file is the raven's problem to report, not Roost's to paper over.
+    read is decided at request time, because a bird may rotate its token at any
+    moment. Roost never mints a credential on a bird's behalf, so a missing
+    token file is the bird's problem to report, not Roost's to paper over.
     """
     if raw is None:
         return None
@@ -297,17 +339,17 @@ def _validate_token_path(raw: object, name: str) -> Path | None:
     candidate = Path(text).expanduser()
     if not candidate.is_absolute():
         raise DescriptorError("token_path must resolve to an absolute path")
-    log.debug("Raven %s declares a token at %s", sanitize.safe_for_log(name), candidate)
+    log.debug("Bird %s declares a token at %s", sanitize.safe_for_log(name), candidate)
     return candidate
 
 
 def _validate_token_header(raw: object) -> str:
-    """Validate the header name a raven wants its token presented in.
+    """Validate the header name a bird wants its token presented in.
 
     Restricted to an RFC 7230 token so the name cannot fold, split, or overwrite
-    another header. Defaults per-raven rather than being a shared constant: the
-    ravens use ``X-<Name>-Token``, and a single well-known header name across
-    ravens would invite exactly the credential mixing this protocol forbids.
+    another header. Defaults per-bird rather than being a shared constant: the
+    birds use ``X-<Name>-Token``, and a single well-known header name across
+    birds would invite exactly the credential mixing this protocol forbids.
     """
     if raw is None:
         return ""
@@ -321,7 +363,7 @@ def _check_api_range(payload: dict) -> tuple[int, int, int]:
     """Return ``(api_version, min_api, max_api)``, or raise if incompatible.
 
     ``min_api``/``max_api`` are optional and default to ``api_version``, so a
-    raven that only speaks one version says so once.
+    bird that only speaks one version says so once.
     """
     api_version = _require_int(
         payload.get("api_version"), "api_version", 1, MAX_DECLARABLE_API
@@ -343,19 +385,19 @@ def _check_api_range(payload: dict) -> tuple[int, int, int]:
     # Inclusive ranges overlap unless one ends before the other begins.
     if not (min_api <= API_VERSION and max_api >= MIN_API_VERSION):
         raise DescriptorError(
-            f"needs raven API [{min_api}, {max_api}]; "
+            f"needs bird API [{min_api}, {max_api}]; "
             f"this menu bar speaks [{MIN_API_VERSION}, {API_VERSION}]"
         )
     return api_version, min_api, max_api
 
 
-def parse_descriptor(text: str, path: Path, *, expected_name: str) -> RavenDescriptor:
+def parse_descriptor(text: str, path: Path, *, expected_name: str) -> BirdDescriptor:
     """Parse and fully validate one descriptor document.
 
     ``expected_name`` is the filename stem. A descriptor whose ``name`` disagrees
     with its filename is refused rather than reconciled: the filename is what
     discovery and the host lock key off, so allowing the two to differ would let
-    one raven publish a descriptor that impersonates another.
+    one bird publish a descriptor that impersonates another.
 
     Raises :class:`DescriptorError` for anything malformed. Never raises anything
     else for content reasons.
@@ -394,13 +436,13 @@ def parse_descriptor(text: str, path: Path, *, expected_name: str) -> RavenDescr
     elif started_raw > 2**53:
         raise DescriptorError("started must be a plausible epoch time")
     elif started_raw <= 0:
-        # Zero or negative is how a raven that could not read its own start time
+        # Zero or negative is how a bird that could not read its own start time
         # records "unknown" -- corvidae's descriptor_is_live says so explicitly,
-        # and a raven built on it will write exactly that. Treated as absent, not
+        # and a bird built on it will write exactly that. Treated as absent, not
         # as a value to compare: comparing would fail for *every* live process
         # rather than only recycled PIDs, and refusing the descriptor outright
-        # (which a negative used to do) hid the raven behind a parse error. Both
-        # break §8's rule that a missing cross-check must never turn a live raven
+        # (which a negative used to do) hid the bird behind a parse error. Both
+        # break §8's rule that a missing cross-check must never turn a live bird
         # into a dead one.
         started = None
     else:
@@ -417,7 +459,7 @@ def parse_descriptor(text: str, path: Path, *, expected_name: str) -> RavenDescr
     except launcher.LaunchError as exc:
         raise DescriptorError(str(exc)) from exc
 
-    return RavenDescriptor(
+    return BirdDescriptor(
         name=name,
         display=display,
         api_version=api_version,
@@ -441,7 +483,7 @@ def pid_is_alive(pid: int, started: float | None = None) -> bool:
     """Return True if ``pid`` names a live process, resisting PID reuse.
 
     ``os.kill(pid, 0)`` sends no signal; it asks the kernel whether the process
-    exists and is ours to signal. That alone cannot tell a live raven from an
+    exists and is ours to signal. That alone cannot tell a live bird from an
     unrelated process that inherited a recycled PID, so when the descriptor
     carries ``started`` it is cross-checked against the OS's own record of when
     the process began. That check is why ``started`` is in the schema at all.
@@ -458,7 +500,7 @@ def pid_is_alive(pid: int, started: float | None = None) -> bool:
         try:
             import psutil
         except ImportError:
-            log.debug("psutil is unavailable; cannot verify raven liveness")
+            log.debug("psutil is unavailable; cannot verify bird liveness")
             return False
         try:
             candidate = psutil.Process(pid)
@@ -467,12 +509,12 @@ def pid_is_alive(pid: int, started: float | None = None) -> bool:
             if started is not None:
                 # Windows recycles PIDs aggressively, so a match on PID alone is
                 # not evidence. Two seconds of slack absorbs the difference
-                # between the raven's own clock reading and the OS's.
+                # between the bird's own clock reading and the OS's.
                 if abs(candidate.create_time() - started) > 2.0:
                     return False
             return True
         except psutil.AccessDenied:
-            # It exists; we simply cannot inspect it. Treat as alive so a raven
+            # It exists; we simply cannot inspect it. Treat as alive so a bird
             # running with different privileges is not silently dropped.
             return True
         except (psutil.Error, OSError):
@@ -500,7 +542,7 @@ def process_start_time(pid: int) -> float | None:
     Uses ``ps -o lstart``-free arithmetic via ``psutil`` when it is installed,
     and otherwise gives up rather than guessing. Returning None means "cannot
     corroborate", which :func:`pid_is_alive` treats as "do not contradict" — a
-    missing cross-check must not turn a live raven into a dead one.
+    missing cross-check must not turn a live bird into a dead one.
     """
     try:
         import psutil
@@ -518,9 +560,9 @@ def default_started() -> float:
     ``started`` describes when the *process* began, not when the descriptor was
     written — :func:`pid_is_alive` corroborates it against the OS's own record,
     so anything else fails that check. Writing ``time.time()`` here is only
-    right for a raven that publishes the instant it starts; one that republishes
+    right for a bird that publishes the instant it starts; one that republishes
     later (on a state change, say) would stamp a fresh timestamp onto a process
-    the OS says began long ago, and the host would declare the live raven dead.
+    the OS says began long ago, and the host would declare the live bird dead.
 
     Falls back to the current time when the OS record is unavailable, which is
     the same "cannot corroborate" case :func:`process_start_time` returns None
@@ -546,29 +588,29 @@ def _read_descriptor_text(path: Path) -> str:
     return raw.decode("utf-8")
 
 
-def load_raven(path: Path) -> Raven:
-    """Load one descriptor file into an :class:`AvailableRaven` or a reason.
+def load_bird(path: Path) -> Bird:
+    """Load one descriptor file into an :class:`AvailableBird` or a reason.
 
     Every failure mode — unreadable, oversized, malformed, version-incompatible,
-    dead process — comes back as :class:`UnavailableRaven`. Nothing propagates.
+    dead process — comes back as :class:`UnavailableBird`. Nothing propagates.
     """
     stem = path.name[: -len(DESCRIPTOR_SUFFIX)] if path.name.endswith(DESCRIPTOR_SUFFIX) else path.stem
-    display = sanitize.sanitize_label(stem, sanitize.DEFAULT_LOG_LIMIT) or "Unknown raven"
+    display = sanitize.sanitize_label(stem, sanitize.DEFAULT_LOG_LIMIT) or "Unknown bird"
     safe_stem = stem if _NAME_RE.fullmatch(stem or "") else ""
 
     if not safe_stem:
-        return UnavailableRaven(
+        return UnavailableBird(
             name="", display=display,
-            reason="Descriptor filename is not a valid raven name.",
+            reason="Descriptor filename is not a valid bird name.",
             path=path,
         )
 
     try:
         text = _read_descriptor_text(path)
     except DescriptorError as exc:
-        return UnavailableRaven(safe_stem, display, f"Descriptor {exc}", path)
+        return UnavailableBird(safe_stem, display, f"Descriptor {exc}", path)
     except (OSError, UnicodeDecodeError) as exc:
-        return UnavailableRaven(
+        return UnavailableBird(
             safe_stem, display,
             f"Descriptor could not be read ({exc.__class__.__name__}).",
             path,
@@ -580,60 +622,84 @@ def load_raven(path: Path) -> Raven:
         # The reason text is composed from validator messages, which never echo
         # descriptor content back except through _require_str's field names —
         # so a hostile label cannot reach the menu through the failure path.
-        return UnavailableRaven(safe_stem, display, f"Descriptor {exc}.", path)
+        return UnavailableBird(safe_stem, display, f"Descriptor {exc}.", path)
 
     if not pid_is_alive(descriptor.pid, descriptor.started):
-        return UnavailableRaven(
+        return UnavailableBird(
             descriptor.name, descriptor.display,
             "Not running (its recorded process is gone).",
             path,
             launch=descriptor.launch,
         )
 
-    return AvailableRaven(descriptor)
+    return AvailableBird(descriptor)
 
 
-def discover(directory: Path | None = None) -> list[Raven]:
-    """Return every raven found in the descriptor directory, best first.
+def discover(directory: Path | None = None) -> list[Bird]:
+    """Return every bird found in the descriptor directory, best first.
 
     Ordering is by descending ``host_priority``, then by name, so the menu is
-    stable across polls and the raven that declares itself primary leads. That
-    ordering is data the ravens supply — Roost does not know which raven
+    stable across polls and the bird that declares itself primary leads. That
+    ordering is data the birds supply — Roost does not know which bird
     "should" be first, and hardcoding one would be the same mistake as a
     hardcoded catalog id.
 
-    Unavailable ravens sort last among themselves by name, and are always
-    returned: an unreachable raven that vanished from the menu would look like a
-    raven that was never installed.
+    Unavailable birds sort last among themselves by name, and are always
+    returned: an unreachable bird that vanished from the menu would look like a
+    bird that was never installed.
+
+    **Two directories are read, not one.** The current one, and the one this
+    contract used while it was named for ravens — because Huginn and Muninn
+    resolve their publish location through ``corvidae`` rather than through
+    Roost, and so still write to the old name. Reading both is what let the
+    vocabulary change without a coordinated release across four repositories.
+
+    A name found in both directories resolves to the **current** one. That is
+    the migration case rather than a conflict: a bird that has moved leaves its
+    old descriptor behind if it was killed before it could withdraw it, and
+    preferring the stale copy would show a dead port for a running process.
     """
-    base = directory or state_dir()
-    try:
-        entries = sorted(base.glob(f"*{DESCRIPTOR_SUFFIX}"))
-    except OSError:
-        log.debug("Raven descriptor directory %s is unreadable", base, exc_info=True)
-        return []
+    if directory is not None:
+        bases = [directory]
+    else:
+        bases = [state_dir()]
+        if (legacy := legacy_state_dir()) is not None and legacy != bases[0]:
+            bases.append(legacy)
 
-    ravens = [load_raven(path) for path in entries if path.is_file()]
+    entries: dict[str, Path] = {}
+    for base in bases:
+        try:
+            found = sorted(base.glob(f"*{DESCRIPTOR_SUFFIX}"))
+        except OSError:
+            log.debug("Bird descriptor directory %s is unreadable", base, exc_info=True)
+            continue
+        for path in found:
+            # setdefault, so the first base listed — the current directory —
+            # wins over a leftover of the same name in the legacy one.
+            if path.is_file():
+                entries.setdefault(path.stem, path)
 
-    def sort_key(raven: Raven) -> tuple[int, int, str]:
-        if isinstance(raven, AvailableRaven):
-            return (0, -raven.descriptor.host_priority, raven.name)
-        return (1, 0, raven.name)
+    birds = [load_bird(path) for path in sorted(entries.values(), key=lambda p: p.stem)]
 
-    return sorted(ravens, key=sort_key)
+    def sort_key(bird: Bird) -> tuple[int, int, str]:
+        if isinstance(bird, AvailableBird):
+            return (0, -bird.descriptor.host_priority, bird.name)
+        return (1, 0, bird.name)
+
+    return sorted(birds, key=sort_key)
 
 
-def available(ravens: list[Raven]) -> list[AvailableRaven]:
-    return [raven for raven in ravens if isinstance(raven, AvailableRaven)]
+def available(birds: list[Bird]) -> list[AvailableBird]:
+    return [bird for bird in birds if isinstance(bird, AvailableBird)]
 
 
 # ── Publishing (used by the reference implementations and the tests) ──────────
 
 @dataclass
 class DescriptorDocument:
-    """The descriptor a raven publishes. Builds the exact schema the host reads.
+    """The descriptor a bird publishes. Builds the exact schema the host reads.
 
-    Ravens are welcome to write the JSON themselves — the schema is the contract,
+    Birds are welcome to write the JSON themselves — the schema is the contract,
     not this class. It exists so the reference implementations in ``examples/``
     and Roost's own tests cannot drift from the parser.
     """

@@ -1,21 +1,21 @@
-# The Raven Protocol
+# The Bird Protocol
 
 **Protocol version:** 1
 **Roost speaks:** 1..1
-**Audience:** anyone implementing a raven
+**Audience:** anyone implementing a bird
 
 This is the contract between Roost — one shared status menu bar — and a
-*raven*: a long-running local daemon that reports status into that menu.
+*bird*: a long-running local daemon that reports status into that menu.
 [Huginn](https://github.com/tohuw/huginn) and
 [Muninn](https://github.com/tohuw/muninn) both implement it. Nothing here is
 specific to either.
 
 Two runnable reference implementations live in [`examples/`](examples/). They are
-documentation, not libraries: Roost does not import them and neither raven
+documentation, not libraries: Roost does not import them and neither bird
 does. Read them alongside this document — where the two disagree, the code in
 `examples/` is the one that has been executed.
 
-Both ravens named above now implement this for real, and those are worth reading
+Both birds named above now implement this for real, and those are worth reading
 next to the examples rather than instead of them — see
 [Reference implementations](#reference-implementations) at the end.
 
@@ -33,7 +33,7 @@ next to the examples rather than instead of them — see
 8. [Liveness and unavailability](#8-liveness-and-unavailability)
 9. [What the host requires of your HTTP surface](#9-what-the-host-requires-of-your-http-surface)
 10. [Lifecycle: quitting, restarting, and starting](#10-lifecycle-quitting-restarting-and-starting)
-11. [A raven's checklist](#11-a-ravens-checklist)
+11. [A bird's checklist](#11-a-birds-checklist)
 
 ---
 
@@ -41,28 +41,28 @@ next to the examples rather than instead of them — see
 
 Three moving parts, and no central authority:
 
-1. A raven **publishes a descriptor** — one small JSON file in a shared
+1. A bird **publishes a descriptor** — one small JSON file in a shared
    directory, naming its port, its PID, and where its token lives.
 2. The host **discovers descriptors** by listing that directory, validates each
    one, and checks that the process it names is alive.
-3. For each live raven the host **fetches a menu** over loopback and renders it.
+3. For each live bird the host **fetches a menu** over loopback and renders it.
 
-There is no registry a raven writes through, so no raven can corrupt another's
-entry and a raven that is not running simply has no file. There is no
-configuration listing known ravens, so adding one is a matter of publishing a
+There is no registry a bird writes through, so no bird can corrupt another's
+entry and a bird that is not running simply has no file. There is no
+configuration listing known birds, so adding one is a matter of publishing a
 descriptor.
 
 The rule that makes this hold together:
 
-> **The host renders a raven's menu without interpreting it.**
+> **The host renders a bird's menu without interpreting it.**
 >
-> It draws the labels a raven sends and hands the action ids back to the raven
+> It draws the labels a bird sends and hands the action ids back to the bird
 > that published them. It does not know what any id means, it has no special case
-> for any raven's name, and it never decides what a raven's menu should contain.
+> for any bird's name, and it never decides what a bird's menu should contain.
 
-That is why a raven can change its own menu — add a section, rename a row, expose
+That is why a bird can change its own menu — add a section, rename a row, expose
 a new action — with no change to Roost and no version bump. Anything that would
-require the host to understand a raven's data does not belong in this protocol.
+require the host to understand a bird's data does not belong in this protocol.
 
 ---
 
@@ -70,17 +70,43 @@ require the host to understand a raven's data does not belong in this protocol.
 
 ### Where it goes
 
-One file per raven, named `{name}.json`, in a directory resolved by this rule —
+One file per bird, named `{name}.json`, in a directory resolved by this rule —
 **in this order**:
 
-1. `$RAVENS_STATE_DIR`, if set and non-empty.
-2. **Windows:** `%LOCALAPPDATA%\Ravens`, falling back to
-   `~\AppData\Local\Ravens` when `LOCALAPPDATA` is unset.
-3. **POSIX:** `$XDG_STATE_HOME/ravens`, falling back to `~/.local/state/ravens`.
+1. `$BIRDS_STATE_DIR`, if set and non-empty.
+2. `$RAVENS_STATE_DIR`, if set and non-empty — the same override under its
+   former name.
+3. **Windows:** `%LOCALAPPDATA%\Birds`, falling back to
+   `~\AppData\Local\Birds` when `LOCALAPPDATA` is unset.
+4. **POSIX:** `$XDG_STATE_HOME/birds`, falling back to `~/.local/state/birds`.
 
-Every participant must implement this identically. A raven that resolves it
+Every participant must implement this identically. A bird that resolves it
 differently publishes where the host is not looking, and the failure is silent —
 an empty menu with nothing to explain it.
+
+#### The `ravens` directory, and why the host still reads it
+
+This contract was written when it had exactly two participants and both of them
+were ravens, and it named its directory accordingly: `%LOCALAPPDATA%\Ravens` and
+`~/.local/state/ravens`. Huginn and Muninn publish there **today**, because they
+resolve the location through [`corvidae`](https://pypi.org/project/corvidae/)
+rather than through the host, and will keep doing so until that package is next
+released.
+
+So the host **reads both directories and merges them**. A name present in both
+resolves to the current one: a bird that has migrated may have left a stale
+descriptor behind, and preferring the stale copy would advertise a dead port for
+a live process.
+
+Two things follow, and they are not the same thing:
+
+- **A bird written today publishes to `birds`.** One directory, the rule above,
+  no compatibility logic of its own. The legacy path is not yours to write to.
+- **A host reads both.** Dropping the legacy read is a breaking change for every
+  bird that has not moved, and it empties the menu with nothing on screen to say
+  why.
+
+When `corvidae` moves, the legacy read becomes dead weight and can go.
 
 Two details are easy to get wrong:
 
@@ -102,7 +128,7 @@ Two details are easy to get wrong:
   "port": 56713,
   "started": 1785315600.482,
   "host_priority": 100,
-  "token_path": "/Users/alice/.local/state/ravens/huginn.token",
+  "token_path": "/Users/alice/.local/state/birds/huginn.token",
   "token_header": "X-Huginn-Token",
   "endpoints": {
     "menu": "/api/menu",
@@ -136,7 +162,7 @@ can add one without breaking an older host.
 
 Publish `launch` and a host may offer to start you when your process is gone.
 Omit it and it will not — which is the whole of the difference, and is why a
-raven that predates this field keeps working unchanged.
+bird that predates this field keeps working unchanged.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -145,7 +171,7 @@ raven that predates this field keeps working unchanged.
 
 **It names an identifier and never a command, and a host must never accept one
 that does.** The descriptor directory is writable by anything running as this
-user, and the host is a single process shared across every raven — so a
+user, and the host is a single process shared across every bird — so a
 descriptor that named a program to execute would be a write-then-execute path
 into the host. The host hands `id` to the platform's own supervisor and lets it
 decide what to run. The command lives in the plist, the unit, or the `Run` key,
@@ -167,10 +193,10 @@ never `eval`'d and never trusted to be well-typed or truthful. The host applies:
   grow between the two, and the point of the cap is to bound what enters memory.
 - **`name` must equal the filename stem.** Refused rather than reconciled: the
   filename is what discovery keys off, so allowing them to differ would let one
-  raven publish a descriptor impersonating another.
+  bird publish a descriptor impersonating another.
 - **Endpoint values must be `/`-rooted relative paths** with no `..` segment, no
   `//` or `/\` prefix, and no query or fragment. A value carrying a scheme or
-  authority would redirect the host off the raven it is talking to — the
+  authority would redirect the host off the bird it is talking to — the
   descriptor equivalent of an open redirect. The host pins the origin to
   `127.0.0.1` and the port to the declared one regardless.
 - **`token_path` must be absolute.** The path is checked for shape only; whether a
@@ -182,7 +208,7 @@ never `eval`'d and never trusted to be well-typed or truthful. The host applies:
 - **`bool` is not an `int`.** `true` in a numeric field is refused, not read as
   `1`.
 
-Any violation makes you an **unavailable raven with a reason** ([§8](#8-liveness-and-unavailability)).
+Any violation makes you an **unavailable bird with a reason** ([§8](#8-liveness-and-unavailability)).
 Never a crash, never a silent omission.
 
 ### Writing it
@@ -192,9 +218,9 @@ file. Stage in a temp file *in the same directory* (so the replace cannot cross 
 filesystem boundary), `fsync`, then `os.replace`.
 
 **Publish after you bind.** A descriptor naming a port that is not yet listening
-makes the host report a healthy raven as unreachable during your startup.
+makes the host report a healthy bird as unreachable during your startup.
 
-**Remove it on exit,** best-effort. A stopped raven should have no descriptor
+**Remove it on exit,** best-effort. A stopped bird should have no descriptor
 rather than a stale one. A hard kill that skips this is still handled — the host
 checks your PID before trusting the file — so do not add complexity to guarantee
 it.
@@ -217,14 +243,14 @@ This is not stylistic. Exact matching is the bug behind **huginn issue #38**: on
 routine version bump silently disabled every plugin, with nothing on screen to
 say why. Two properties follow from getting it right:
 
-- **A bump on one side does not break the other.** A raven declaring `1..2`
+- **A bump on one side does not break the other.** A bird declaring `1..2`
   keeps working against a host that speaks `1..1`, and vice versa.
 - **A genuine incompatibility is loud.** The host reports it as an unavailable
-  raven whose reason *names both ranges*:
+  bird whose reason *names both ranges*:
 
-  > `Descriptor needs raven API [3, 4]; this menu bar speaks [1, 1].`
+  > `Descriptor needs bird API [3, 4]; this menu bar speaks [1, 1].`
 
-  Never a raven that quietly stops appearing.
+  Never a bird that quietly stops appearing.
 
 A declared value is capped at `API_VERSION + 100`, so a hostile descriptor cannot
 claim `max_api = 2**63` and stay "compatible" through every future breaking
@@ -236,7 +262,7 @@ change. Reserve a bump for something that genuinely breaks an older reader.
 
 Lifecycle ([§10](#10-lifecycle-quitting-restarting-and-starting)) is the worked
 example, and the useful one because it *sounds* like a protocol change and is not:
-a raven that publishes a **Quit** row is publishing an ordinary action id, so the
+a bird that publishes a **Quit** row is publishing an ordinary action id, so the
 window stayed `1..1` and an older host renders the row correctly without knowing
 what it does. Had it been spelled as a `lifecycle` field the host had to
 recognise, every host below the bump would have had to be told — for a feature
@@ -278,7 +304,7 @@ The host `GET`s your `menu` endpoint and expects JSON:
 | Field | Type | Meaning |
 |---|---|---|
 | `title` | string | Replaces the descriptor's `display` for this render, so you can retitle your own section as your state changes. |
-| `badge` | int | Your count of things wanting attention, `0..9999`. Shown beside your name; summed across ravens. Zero is not shown. |
+| `badge` | int | Your count of things wanting attention, `0..9999`. Shown beside your name; summed across birds. Zero is not shown. |
 | `sections` | array | Up to 12. Anything else is dropped. |
 
 ### A section
@@ -295,7 +321,7 @@ The host `GET`s your `menu` endpoint and expects JSON:
 |---|---|---|
 | `label` | string | **Required.** ≤120 chars. An item with no legible label is dropped — there is nothing to show. |
 | `id` | string | Action id, ≤128 chars. POSTed back to your `action` endpoint. |
-| `url` | string | Raven-local path, ≤512 chars. Opened as `http://127.0.0.1:{port}{url}`. |
+| `url` | string | Bird-local path, ≤512 chars. Opened as `http://127.0.0.1:{port}{url}`. |
 | `detail` | string | Secondary text, ≤80 chars. Rendered after the label. |
 | `enabled` | bool | Defaults `true`. An item with neither `id` nor `url` is forced to `false`. |
 | `style` | string | `normal`, `attention`, or `muted`. Anything else becomes `normal`. |
@@ -304,14 +330,14 @@ The host `GET`s your `menu` endpoint and expects JSON:
 ### How the host treats it
 
 - **`style` is an intent, not styling.** The host maps it to its own presentation
-  (currently a `●` or `·` marker). A raven cannot supply a marker of its own,
+  (currently a `●` or `·` marker). A bird cannot supply a marker of its own,
   because that would be styling by another name — and the host deciding
   presentation is what keeps the two platforms' menus identical.
 - **Strings are sanitised, not refused.** Unlike descriptor fields, a menu label
   has ANSI escapes, control characters, and bidi overrides *stripped*, whitespace
   collapsed, and length capped. A menu is live data on a hot path; a single bad
-  character should degrade one row, not disable a running raven. The reason both
-  policies exist: a bad descriptor is a broken raven, a bad label is a bad label.
+  character should degrade one row, not disable a running bird. The reason both
+  policies exist: a bad descriptor is a broken bird, a bad label is a bad label.
 - **Bounds are enforced while parsing, not after.** A hostile payload cannot make
   the host build a huge structure and only then discard it. Ten thousand items
   would hang the menu build inside the UI run loop, which reads to the user as a
@@ -320,7 +346,7 @@ The host `GET`s your `menu` endpoint and expects JSON:
 - **Unknown fields are ignored.**
 - **An unusable payload leaves you "up but silent."** If you answer but nothing
   survives parsing, the host draws your name with *"Nothing to report."* — which
-  is visibly different from a raven it could not reach.
+  is visibly different from a bird it could not reach.
 
 An empty `sections` array is a legitimate answer and produces the same
 "Nothing to report." row.
@@ -366,14 +392,14 @@ mid-response.
 
 A `url` is opened in the browser as `http://127.0.0.1:{port}{url}`, built from
 **your descriptor's own port**. A menu item cannot navigate the user anywhere
-except the raven that offered it. Query strings are allowed (a link legitimately
+except the bird that offered it. Query strings are allowed (a link legitimately
 carries parameters); fragments are not.
 
 ---
 
 ## 6. Token isolation
 
-> **Each raven owns its own credential. The host never mints one, never shares
+> **Each bird owns its own credential. The host never mints one, never shares
 > one, and never caches one.**
 
 Concretely:
@@ -384,7 +410,7 @@ Concretely:
   per start is the expected pattern — with no coordination. A cached token would
   make the host authenticate with a dead credential and report you as broken.
 - Request headers are built per call from a fixed allowlist. There is no path by
-  which one raven's credential can appear in another raven's request.
+  which one bird's credential can appear in another bird's request.
 - A token is capped at 4 KiB, and one containing CR/LF or control characters is
   refused rather than sent — it would inject headers into the host's own request.
 - **No `token_path` means unauthenticated requests.** Whether that is acceptable
@@ -417,17 +443,17 @@ distinctly, because the two need different handling: contention is the normal
 outcome of a duplicate launch, while an unwritable path means this machine cannot
 host at all and the user has to be told.
 
-**Which raven leads the menu is a separate question, answered by data.** You
+**Which bird leads the menu is a separate question, answered by data.** You
 declare `host_priority`; the host sorts by it, descending, then by name. Huginn
 declares a higher priority than Muninn and therefore leads when both are present;
 when Huginn is absent, Muninn's section simply sorts first and the same menu runs
 standalone.
 
-Neither raven knows the other exists, and the host knows neither name. Hardcoding
+Neither bird knows the other exists, and the host knows neither name. Hardcoding
 one would be the same mistake as a hardcoded catalog id — which is exactly the
 mistake this repository's previous design made, twice, once per platform.
 
-Ravens do **not** participate in host election. You are not the host; you are
+Birds do **not** participate in host election. You are not the host; you are
 never asked to be; you never need to know who is.
 
 ---
@@ -446,25 +472,25 @@ The host checks that the process you named is alive, resisting **PID reuse**:
 - `PermissionError` counts as alive: the process exists, it just belongs to
   another user.
 - If the start time **cannot be determined**, the check does not contradict — a
-  missing cross-check must never turn a live raven into a dead one.
+  missing cross-check must never turn a live bird into a dead one.
 - A **zero or negative `started` means "unknown"**, and is treated exactly as if
-  you had omitted the field. That is the value a raven writes when it could not
+  you had omitted the field. That is the value a bird writes when it could not
   read its own start time, so comparing against it would fail for every live
   process rather than only for recycled PIDs.
 
 **Supply `started`, and read it from the OS** — not from the clock at the moment
-you write the descriptor. Without it, a recycled PID can pass as a live raven.
+you write the descriptor. Without it, a recycled PID can pass as a live bird.
 With a wall-clock reading, the opposite happens the moment the two diverge by
 more than the slack: any republish from a process that has been running a while
 — a restart handled in-process, say — stamps "now" onto a process the OS says
-began long ago, and the host declares a healthy raven gone.
+began long ago, and the host declares a healthy bird gone.
 
 ### Unavailability is a first-class result
 
-> An unreachable, stopped, stale, or malformed raven renders as a **disabled
+> An unreachable, stopped, stale, or malformed bird renders as a **disabled
 > section with a visible reason**.
 
-Never a crash. Never a silent omission — a raven that vanished from the menu is
+Never a crash. Never a silent omission — a bird that vanished from the menu is
 indistinguishable from one that was never installed, and leaves the user nothing
 to act on. Never "trusted anyway."
 
@@ -486,10 +512,10 @@ The reasons the host produces:
 | `Sent a response that is too large.` | Over 256 KiB |
 | `Descriptor …` | Any validation failure, quoting the specific problem |
 
-Failure is **not contagious**: one broken raven never prevents another's section
-from rendering, and the host survives a raven that hangs, floods, or lies.
+Failure is **not contagious**: one broken bird never prevents another's section
+from rendering, and the host survives a bird that hangs, floods, or lies.
 
-`roost ravens` prints the same reasons in a terminal.
+`roost birds` prints the same reasons in a terminal.
 
 ---
 
@@ -519,7 +545,7 @@ your port came from something else. Defend it yourself.
 5 s action timeout, a 256 KiB response cap enforced on the read rather than on
 your declared `Content-Length`, and redirects refused outright (following one
 would send the host, and the token it just attached, to an origin your descriptor
-never declared). A hung raven degrades to a disabled section, never to a frozen
+never declared). A hung bird degrades to a disabled section, never to a frozen
 menu.
 
 > **Why the host relays nothing.** An earlier design in this repository ran an
@@ -531,21 +557,21 @@ menu.
 > refuses a foreign `Host` and **any** `Origin`, takes no request body, and routes
 > only `GET`.
 >
-> Do not add a relay to this protocol. If a raven needs a fixed external URL, it
+> Do not add a relay to this protocol. If a bird needs a fixed external URL, it
 > owns that endpoint itself, with its own authentication.
 
 ---
 
 ## 10. Lifecycle: quitting, restarting, and starting
 
-Ravens replaced menu bars that owned the daemon's lifecycle — they started a dead
+Birds replaced menu bars that owned the daemon's lifecycle — they started a dead
 daemon, stopped a live one, and offered a restart. This section says how each of
 those is expressed here, and it is deliberately short in one direction: **two of
 the three need nothing new, and the third is not the host's job.**
 
 ### Quit and Restart are ordinary actions
 
-A running raven can stop or restart *itself*. It is a process; it has a signal
+A running bird can stop or restart *itself*. It is a process; it has a signal
 handler and an exit path; it does not need a second process to end it. So these
 are published exactly like any other row:
 
@@ -559,36 +585,36 @@ nothing above changes what the host does. The host draws the label and POSTs the
 id back, as it does for `focus:s-1`. It does not know that `quit` ends a process
 any more than it knows what `focus:s-1` focuses, and that ignorance is the
 property [§1](#1-the-shape-of-the-protocol) is built on — a host that recognised
-`quit` would be interpreting a companion's data, and would then owe every raven
+`quit` would be interpreting a companion's data, and would then owe every bird
 an opinion about what stopping means.
 
-Two consequences follow, and both are on the raven:
+Two consequences follow, and both are on the bird:
 
 - **Answer before you exit.** The host waits up to 5 s for a response
-  ([§5](#5-actions-and-links)). A raven that dies inside the request handler makes
+  ([§5](#5-actions-and-links)). A bird that dies inside the request handler makes
   a successful quit look like a failure. Reply, *then* shut down — ask your own
   event loop to stop and let the HTTP response drain first.
 - **Withdraw on the way out**, as [§2](#2-the-descriptor) already requires. A quit
-  that leaves a descriptor behind is a raven the host reports as
+  that leaves a descriptor behind is a bird the host reports as
   `Not running (its recorded process is gone).` rather than one that is simply
   gone.
 
-A raven that offers no lifecycle rows is complete and correct. These are not
-required ids; nothing here reserves the words `quit` or `restart`, and a raven may
+A bird that offers no lifecycle rows is complete and correct. These are not
+required ids; nothing here reserves the words `quit` or `restart`, and a bird may
 name them anything, translate them, or omit them.
 
-### Starting a stopped raven is not the host's job
+### Starting a stopped bird is not the host's job
 
-> **Roost never starts a raven.** Not by `Popen`, not by `launchctl`, not from a
-> path recorded in a file. If a raven is stopped, Roost has nothing to click.
+> **Roost never starts a bird.** Not by `Popen`, not by `launchctl`, not from a
+> path recorded in a file. If a bird is stopped, Roost has nothing to click.
 
 This is the one place the protocol says *no* rather than *how*, so it is worth
 being precise about why — the naive fix looks small and is not.
 
-**There is nothing to click on.** A stopped raven has no descriptor: [§2](#2-the-descriptor)
+**There is nothing to click on.** A stopped bird has no descriptor: [§2](#2-the-descriptor)
 requires withdrawal on exit, so the directory is empty and the host has no name,
-no port, and no row. Verified: with nothing running, `~/.local/state/ravens/` has
-no files in it. An action is a row in *some raven's* menu, and there is no menu.
+no port, and no row. Verified: with nothing running, `~/.local/state/birds/` has
+no files in it. An action is a row in *some bird's* menu, and there is no menu.
 "Start Huginn" is therefore not expressible as an action — not by convention, but
 by construction.
 
@@ -597,36 +623,36 @@ considered and rejected:
 
 | Rejected | Why |
 |---|---|
-| A **persistent registration** written at install time, naming an interpreter and a checkout for the host to run | This is a write-then-execute path with the file as the only gate. Huginn already shipped exactly this — `daemon.json` records `python` and `repo` so a tray could relaunch a dead daemon — and it needed 0600, an ownership check, a group/world-writable check on every parent, and a bounded ancestor walk before it was safe, because the old macOS app *executed* the interpreter named in it. Moving that into a shared host multiplies it: every raven's registration becomes an exec path in one process. |
-| A **withdrawn-but-present descriptor** marked `stopped` | It contradicts [§2](#2-the-descriptor) and [§8](#8-liveness-and-unavailability). A file that outlives its process is exactly what the PID and `started` cross-check exists to disbelieve, and a `stopped` flag would be a self-reported claim the host cannot verify — a crashed raven and a cleanly-stopped one would be indistinguishable except by a field the dead process did not get to write. It also turns "uninstalled" into a state nobody ever clears. |
-| The host asking the **OS supervisor** (`launchctl kickstart`, `systemctl --user start`) on the raven's behalf | Closer — the exec is the supervisor's, not the host's — but the host still has to learn *which* unit belongs to which raven, from a descriptor that is not there. It would need a second persistent registry keyed by raven name, which is the first row of this table again with a launchd label in place of an interpreter path. |
+| A **persistent registration** written at install time, naming an interpreter and a checkout for the host to run | This is a write-then-execute path with the file as the only gate. Huginn already shipped exactly this — `daemon.json` records `python` and `repo` so a tray could relaunch a dead daemon — and it needed 0600, an ownership check, a group/world-writable check on every parent, and a bounded ancestor walk before it was safe, because the old macOS app *executed* the interpreter named in it. Moving that into a shared host multiplies it: every bird's registration becomes an exec path in one process. |
+| A **withdrawn-but-present descriptor** marked `stopped` | It contradicts [§2](#2-the-descriptor) and [§8](#8-liveness-and-unavailability). A file that outlives its process is exactly what the PID and `started` cross-check exists to disbelieve, and a `stopped` flag would be a self-reported claim the host cannot verify — a crashed bird and a cleanly-stopped one would be indistinguishable except by a field the dead process did not get to write. It also turns "uninstalled" into a state nobody ever clears. |
+| The host asking the **OS supervisor** (`launchctl kickstart`, `systemctl --user start`) on the bird's behalf | Closer — the exec is the supervisor's, not the host's — but the host still has to learn *which* unit belongs to which bird, from a descriptor that is not there. It would need a second persistent registry keyed by bird name, which is the first row of this table again with a launchd label in place of an interpreter path. |
 
 **What answers the need instead.** The OS supervisor already does this, without
-the host in the picture at all: a raven registers a login agent (Huginn's
+the host in the picture at all: a bird registers a login agent (Huginn's
 `install-agent` — launchd on macOS, a systemd user unit on Linux, a `Run` key on
 Windows) and the OS starts it at login and, on macOS, restarts it after a crash.
-That is a supervisor relationship between the raven and the OS. Roost is not a
+That is a supervisor relationship between the bird and the OS. Roost is not a
 party to it, holds no path from it, and executes nothing.
 
 So the honest division is:
 
 | Want | Who does it |
 |---|---|
-| Stop a running raven | The raven, via an action id it published |
-| Restart a running raven | The raven, the same way |
-| Start it at login, keep it up | The OS supervisor the raven registered with |
+| Stop a running bird | The bird, via an action id it published |
+| Restart a running bird | The bird, the same way |
+| Start it at login, keep it up | The OS supervisor the bird registered with |
 | Start it right now, from stopped | The user — a shell, or the login agent — **not the menu bar** |
 
-**A note for a raven implementing Quit.** If a supervisor with a restart policy is
+**A note for a bird implementing Quit.** If a supervisor with a restart policy is
 installed, quitting may not stick: launchd's `KeepAlive` relaunches the daemon even
 after a clean exit — deliberately, and Huginn documents removing the agent first.
-That conflict is between the raven and its supervisor, and it is one the host
+That conflict is between the bird and its supervisor, and it is one the host
 cannot mediate, which is another way of saying the host was never the right place
 for a start button.
 
 ---
 
-## 11. A raven's checklist
+## 11. A bird's checklist
 
 **Startup**
 
@@ -660,7 +686,7 @@ for a start button.
 - Assume the host will start you. It never will
   ([§10](#10-lifecycle-quitting-restarting-and-starting)); register with your
   platform's login agent instead.
-- Assume you are the host, or that another raven is running.
+- Assume you are the host, or that another bird is running.
 - Return an unbounded response, or block a menu fetch indefinitely.
 
 ---
@@ -671,35 +697,35 @@ for a start button.
 
 | File | Shows |
 |---|---|
-| [`examples/huginn_raven.py`](examples/huginn_raven.py) | Leading raven: higher priority, badge, token, per-item actions |
-| [`examples/muninn_raven.py`](examples/muninn_raven.py) | Companion raven: lower priority, link-only rows, no token |
+| [`examples/huginn_bird.py`](examples/huginn_bird.py) | Leading bird: higher priority, badge, token, per-item actions |
+| [`examples/muninn_bird.py`](examples/muninn_bird.py) | Companion bird: lower priority, link-only rows, no token |
 
 Both are stdlib-only and runnable:
 
 ```bash
-python3 examples/huginn_raven.py
+python3 examples/huginn_bird.py
 ```
 
-Start one or both and the tray will show them; `roost ravens` will explain
+Start one or both and the tray will show them; `roost birds` will explain
 anything it will not show.
 
-### Shipped, in the ravens themselves
+### Shipped, in the birds themselves
 
-Both ravens implement this contract in production, and the two sit at opposite ends
+Both birds implement this contract in production, and the two sit at opposite ends
 of its optional parts — which makes them the better answer to "how do I actually do
 this in an application that already exists":
 
-| Project | Its raven side |
+| Project | Its bird side |
 |---|---|
-| [Huginn](https://github.com/tohuw/huginn) | [`huginn/raven.py`](https://github.com/tohuw/huginn/blob/master/huginn/raven.py) — authenticated `menu` *and* `action` routes inside an existing FastAPI app, behind the same token gate as the rest of its API |
-| [Muninn](https://github.com/tohuw/muninn) | [`muninn/raven.py`](https://github.com/tohuw/muninn/blob/main/muninn/raven.py) (descriptor and payload) plus [`muninn/ravenserve.py`](https://github.com/tohuw/muninn/blob/main/muninn/ravenserve.py) (its own loopback listener) — no `token_path`, no `action` endpoint, every row a link |
+| [Huginn](https://github.com/tohuw/huginn) | [`huginn/bird.py`](https://github.com/tohuw/huginn/blob/master/huginn/bird.py) — authenticated `menu` *and* `action` routes inside an existing FastAPI app, behind the same token gate as the rest of its API |
+| [Muninn](https://github.com/tohuw/muninn) | [`muninn/bird.py`](https://github.com/tohuw/muninn/blob/main/muninn/bird.py) (descriptor and payload) plus [`muninn/birdserve.py`](https://github.com/tohuw/muninn/blob/main/muninn/birdserve.py) (its own loopback listener) — no `token_path`, no `action` endpoint, every row a link |
 
 Neither is a dependency of Roost and Roost is not a dependency of either. The
 descriptor mechanics [§2](#2-the-descriptor) describes — the state-directory
 resolution rule, the atomic 0600 publish, the ownership-checked withdraw, the
 liveness cross-check — are shared between them through
 [`corvidae`](https://pypi.org/project/corvidae/), a stdlib-only package with no
-dependencies. **A third raven should probably use it rather than reimplement §2**;
+dependencies. **A third bird should probably use it rather than reimplement §2**;
 the resolution rule in particular fails silently when two participants disagree,
 which is the whole reason it was extracted. What a descriptor *says*, and the menu
 itself, stay per-project on purpose.

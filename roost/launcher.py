@@ -1,6 +1,6 @@
-"""Asking the OS to start a raven that has stopped.
+"""Asking the OS to start a bird that has stopped.
 
-Roost used to have no answer here, and the menu said so badly: both ravens
+Roost used to have no answer here, and the menu said so badly: both birds
 greyed out, "Not running (its recorded process is gone)", and nothing to click.
 The stated reason was that a stopped daemon withdraws its descriptor so the host
 cannot see it to offer a row — but that is only true of a *clean* shutdown. A
@@ -10,7 +10,7 @@ is precisely the case that produced the useless menu.
 The real constraint is narrower, and it survives: **Roost must never execute a
 command named in a descriptor.** The descriptor directory is writable by
 anything running as this user, and Roost is one process shared across every
-raven, so "the file says which program to run" is the write-then-execute path
+bird, so "the file says which program to run" is the write-then-execute path
 this project hardened against.
 
 So a descriptor names an *identifier*, never a command:
@@ -21,12 +21,12 @@ So a descriptor names an *identifier*, never a command:
 
 Roost hands that identifier to the platform's own supervisor and lets it decide
 what to run. The command lives in launchd's plist, systemd's unit, or the
-``Run`` key — all of them written by the raven's own ``install-agent``, which
+``Run`` key — all of them written by the bird's own ``install-agent``, which
 the user ran deliberately. The worst a forged descriptor achieves is starting a
 service the user already installed. Roost still owns no lifecycle; it is only
 asking the thing that does.
 
-A raven that publishes no ``launch`` gets a disabled row naming the command that
+A bird that publishes no ``launch`` gets a disabled row naming the command that
 would install one, which is at least a dead end with directions.
 """
 
@@ -76,7 +76,7 @@ def parse(raw: object) -> LaunchSpec | None:
 
     Raises :class:`LaunchError` for a block that is present and wrong, so the
     descriptor validator can refuse it the way it refuses any other malformed
-    field. Absent is not an error: ``launch`` is optional, and a raven that
+    field. Absent is not an error: ``launch`` is optional, and a bird that
     predates it must keep working.
     """
     if raw is None:
@@ -167,7 +167,7 @@ def start(spec: LaunchSpec) -> tuple[bool, str]:
     """Ask the supervisor to start this service. Returns ``(ok, reason)``.
 
     Never raises. A failure is a row that stays greyed with a reason, which is
-    the same contract every other unavailable raven already has.
+    the same contract every other unavailable bird already has.
     """
     if spec.kind == "launchd":
         # kickstart starts it whether or not it is loaded, which "start" alone

@@ -1,9 +1,9 @@
-"""Per-raven token isolation and bounded-request tests.
+"""Per-bird token isolation and bounded-request tests.
 
 These run against real loopback HTTP servers, because the properties being pinned
 are wire properties: which header a token rides in, which port it reaches, what
-happens when a raven hangs or floods, and — the hard rule from the shared-menubar
-proposal — that one raven's credential never reaches another raven.
+happens when a bird hangs or floods, and — the hard rule from the shared-menubar
+proposal — that one bird's credential never reaches another bird.
 """
 
 import http.server
@@ -20,8 +20,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from roost import raven_client
-from roost import ravens
+from roost import bird_client
+from roost import birds
 
 
 class _Recorder(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -34,8 +34,8 @@ class _Recorder(socketserver.ThreadingMixIn, socketserver.TCPServer):
 _POLL_INTERVAL = 0.01
 
 
-class _Raven:
-    """A stand-in raven that records exactly what the client sent it."""
+class _Bird:
+    """A stand-in bird that records exactly what the client sent it."""
 
     def __init__(self, *, body=None, status=200, delay=0.0,
                  content_length=None, raw_body=None, location=None):
@@ -127,12 +127,12 @@ def _descriptor(port, tmp_path=None, **overrides):
         "path": (tmp_path or Path("/tmp")) / "huginn.json",
     }
     values.update(overrides)
-    return ravens.RavenDescriptor(**values)
+    return birds.BirdDescriptor(**values)
 
 
 @pytest.fixture
-def raven():
-    server = _Raven()
+def bird():
+    server = _Bird()
     try:
         yield server
     finally:
@@ -142,41 +142,41 @@ def raven():
 # ── Token isolation: the hard rule ────────────────────────────────────────────
 
 class TestTokenIsolation:
-    def test_token_is_sent_in_the_declared_header(self, raven, tmp_path):
+    def test_token_is_sent_in_the_declared_header(self, bird, tmp_path):
         token_file = tmp_path / "token"
         token_file.write_text("s3cret-value", encoding="utf-8")
         descriptor = _descriptor(
-            raven.port, tmp_path,
+            bird.port, tmp_path,
             token_path=token_file, token_header="X-Huginn-Token",
         )
-        raven_client.fetch_menu(descriptor)
-        assert raven.header("X-Huginn-Token") == "s3cret-value"
+        bird_client.fetch_menu(descriptor)
+        assert bird.header("X-Huginn-Token") == "s3cret-value"
 
-    def test_default_header_is_derived_per_raven(self, raven, tmp_path):
+    def test_default_header_is_derived_per_bird(self, bird, tmp_path):
         """No shared well-known header name: that shape invites credential mixing."""
         token_file = tmp_path / "token"
         token_file.write_text("abc", encoding="utf-8")
         descriptor = _descriptor(
-            raven.port, tmp_path, name="muninn", token_path=token_file,
+            bird.port, tmp_path, name="muninn", token_path=token_file,
         )
-        raven_client.fetch_menu(descriptor)
-        assert raven.header("X-Muninn-Token") == "abc"
-        assert raven.header("X-Huginn-Token") is None
+        bird_client.fetch_menu(descriptor)
+        assert bird.header("X-Muninn-Token") == "abc"
+        assert bird.header("X-Huginn-Token") is None
 
-    def test_one_ravens_token_never_reaches_another(self, tmp_path):
+    def test_one_birds_token_never_reaches_another(self, tmp_path):
         """The core invariant from the proposal, tested against two real servers."""
-        first, second = _Raven(), _Raven()
+        first, second = _Bird(), _Bird()
         try:
             huginn_token = tmp_path / "huginn-token"
             huginn_token.write_text("huginn-secret", encoding="utf-8")
             muninn_token = tmp_path / "muninn-token"
             muninn_token.write_text("muninn-secret", encoding="utf-8")
 
-            raven_client.fetch_menu(_descriptor(
+            bird_client.fetch_menu(_descriptor(
                 first.port, tmp_path, name="huginn",
                 token_path=huginn_token, token_header="X-Huginn-Token",
             ))
-            raven_client.fetch_menu(_descriptor(
+            bird_client.fetch_menu(_descriptor(
                 second.port, tmp_path, name="muninn",
                 token_path=muninn_token, token_header="X-Muninn-Token",
             ))
@@ -191,30 +191,30 @@ class TestTokenIsolation:
             first.close()
             second.close()
 
-    def test_no_token_path_means_no_credential(self, raven, tmp_path):
-        """Roost never mints a credential on a raven's behalf."""
-        raven_client.fetch_menu(_descriptor(raven.port, tmp_path))
-        headers = json.dumps(raven.requests[-1]["headers"]).lower()
+    def test_no_token_path_means_no_credential(self, bird, tmp_path):
+        """Roost never mints a credential on a bird's behalf."""
+        bird_client.fetch_menu(_descriptor(bird.port, tmp_path))
+        headers = json.dumps(bird.requests[-1]["headers"]).lower()
         assert "token" not in headers
         assert "authorization" not in headers
 
-    def test_token_is_reread_every_call_not_cached(self, raven, tmp_path):
-        """A raven rotates its token on restart; a cached one would look broken."""
+    def test_token_is_reread_every_call_not_cached(self, bird, tmp_path):
+        """A bird rotates its token on restart; a cached one would look broken."""
         token_file = tmp_path / "token"
         token_file.write_text("first", encoding="utf-8")
         descriptor = _descriptor(
-            raven.port, tmp_path, token_path=token_file, token_header="X-T",
+            bird.port, tmp_path, token_path=token_file, token_header="X-T",
         )
-        raven_client.fetch_menu(descriptor)
-        assert raven.header("X-T") == "first"
+        bird_client.fetch_menu(descriptor)
+        assert bird.header("X-T") == "first"
         token_file.write_text("second", encoding="utf-8")
-        raven_client.fetch_menu(descriptor)
-        assert raven.header("X-T") == "second"
+        bird_client.fetch_menu(descriptor)
+        assert bird.header("X-T") == "second"
 
-    def test_no_ambient_headers_are_sent(self, raven, tmp_path):
+    def test_no_ambient_headers_are_sent(self, bird, tmp_path):
         """The outbound header set is built from scratch, not from anything inbound."""
-        raven_client.fetch_menu(_descriptor(raven.port, tmp_path))
-        names = {key.lower() for key in raven.requests[-1]["headers"]}
+        bird_client.fetch_menu(_descriptor(bird.port, tmp_path))
+        names = {key.lower() for key in bird.requests[-1]["headers"]}
         for forbidden in ("cookie", "origin", "referer", "authorization"):
             assert forbidden not in names
 
@@ -222,29 +222,29 @@ class TestTokenIsolation:
 class TestReadToken:
     def test_missing_file_is_not_fatal(self, tmp_path):
         descriptor = _descriptor(1, tmp_path, token_path=tmp_path / "absent")
-        assert raven_client.read_token(descriptor) is None
+        assert bird_client.read_token(descriptor) is None
 
     def test_no_token_path(self, tmp_path):
-        assert raven_client.read_token(_descriptor(1, tmp_path)) is None
+        assert bird_client.read_token(_descriptor(1, tmp_path)) is None
 
     def test_whitespace_is_stripped(self, tmp_path):
         token_file = tmp_path / "token"
         token_file.write_text("  value\n", encoding="utf-8")
         descriptor = _descriptor(1, tmp_path, token_path=token_file)
-        assert raven_client.read_token(descriptor) == "value"
+        assert bird_client.read_token(descriptor) == "value"
 
     def test_empty_token_is_none(self, tmp_path):
         token_file = tmp_path / "token"
         token_file.write_text("   \n", encoding="utf-8")
         descriptor = _descriptor(1, tmp_path, token_path=token_file)
-        assert raven_client.read_token(descriptor) is None
+        assert bird_client.read_token(descriptor) is None
 
     def test_oversized_token_is_refused(self, tmp_path):
         """token_path is descriptor-controlled, so the read must be bounded."""
         token_file = tmp_path / "token"
-        token_file.write_text("z" * (ravens.MAX_TOKEN_BYTES + 10), encoding="utf-8")
+        token_file.write_text("z" * (birds.MAX_TOKEN_BYTES + 10), encoding="utf-8")
         descriptor = _descriptor(1, tmp_path, token_path=token_file)
-        assert raven_client.read_token(descriptor) is None
+        assert bird_client.read_token(descriptor) is None
 
     @pytest.mark.parametrize("content", [
         "abc\r\nX-Evil: 1", "abc\x00def", "abc\x1b[31m",
@@ -254,66 +254,66 @@ class TestReadToken:
         token_file = tmp_path / "token"
         token_file.write_bytes(content.encode("utf-8"))
         descriptor = _descriptor(1, tmp_path, token_path=token_file)
-        assert raven_client.read_token(descriptor) is None
+        assert bird_client.read_token(descriptor) is None
 
     def test_non_utf8_token_is_refused(self, tmp_path):
         token_file = tmp_path / "token"
         token_file.write_bytes(b"\xff\xfe\xfd")
         descriptor = _descriptor(1, tmp_path, token_path=token_file)
-        assert raven_client.read_token(descriptor) is None
+        assert bird_client.read_token(descriptor) is None
 
 
 class TestDefaultTokenHeader:
     @pytest.mark.parametrize("name,expected", [
         ("huginn", "X-Huginn-Token"),
         ("muninn", "X-Muninn-Token"),
-        ("my-raven", "X-MyRaven-Token"),
-        ("", "X-Raven-Token"),
+        ("my-bird", "X-MyBird-Token"),
+        ("", "X-Bird-Token"),
     ])
     def test_names(self, name, expected):
-        assert raven_client.default_token_header(name) == expected
+        assert bird_client.default_token_header(name) == expected
 
 
 # ── Boundedness ───────────────────────────────────────────────────────────────
 
 class TestBoundedRequests:
-    def test_a_hanging_raven_times_out(self, tmp_path):
-        """A hung raven must not freeze the menu-build thread."""
-        server = _Raven(delay=5.0)
+    def test_a_hanging_bird_times_out(self, tmp_path):
+        """A hung bird must not freeze the menu-build thread."""
+        server = _Bird(delay=5.0)
         try:
             descriptor = _descriptor(server.port, tmp_path)
             started = time.monotonic()
-            with pytest.raises(raven_client.RavenRequestError) as exc:
-                raven_client.fetch_menu(descriptor, timeout=0.3)
+            with pytest.raises(bird_client.BirdRequestError) as exc:
+                bird_client.fetch_menu(descriptor, timeout=0.3)
             assert time.monotonic() - started < 3.0
             assert "in time" in exc.value.reason or "answering" in exc.value.reason
         finally:
             server.close()
 
     def test_an_unreachable_port_is_a_reason(self, tmp_path):
-        server = _Raven()
+        server = _Bird()
         port = server.port
         server.close()
-        with pytest.raises(raven_client.RavenRequestError) as exc:
-            raven_client.fetch_menu(_descriptor(port, tmp_path), timeout=1.0)
+        with pytest.raises(bird_client.BirdRequestError) as exc:
+            bird_client.fetch_menu(_descriptor(port, tmp_path), timeout=1.0)
         assert "not answering" in exc.value.reason
 
     def test_oversized_response_is_refused_by_declared_length(self, tmp_path):
-        server = _Raven(content_length=raven_client.MAX_RESPONSE_BYTES + 1)
+        server = _Bird(content_length=bird_client.MAX_RESPONSE_BYTES + 1)
         try:
-            with pytest.raises(raven_client.RavenRequestError) as exc:
-                raven_client.fetch_menu(_descriptor(server.port, tmp_path))
+            with pytest.raises(bird_client.BirdRequestError) as exc:
+                bird_client.fetch_menu(_descriptor(server.port, tmp_path))
             assert "too large" in exc.value.reason
         finally:
             server.close()
 
     def test_oversized_response_is_refused_on_the_read(self, tmp_path):
         """The cap holds even when Content-Length understates the body."""
-        blob = json.dumps({"sections": [], "pad": "z" * (raven_client.MAX_RESPONSE_BYTES + 1024)})
-        server = _Raven(raw_body=blob.encode("utf-8"), content_length=10)
+        blob = json.dumps({"sections": [], "pad": "z" * (bird_client.MAX_RESPONSE_BYTES + 1024)})
+        server = _Bird(raw_body=blob.encode("utf-8"), content_length=10)
         try:
-            with pytest.raises(raven_client.RavenRequestError):
-                raven_client.fetch_menu(_descriptor(server.port, tmp_path))
+            with pytest.raises(bird_client.BirdRequestError):
+                bird_client.fetch_menu(_descriptor(server.port, tmp_path))
         finally:
             server.close()
 
@@ -321,16 +321,16 @@ class TestBoundedRequests:
         """The one read in this module the cap did not cover.
 
         Every read on the success path is bounded, and the error path called a
-        bare ``exc.read()`` -- which reads to EOF. A raven answering 500 with an
+        bare ``exc.read()`` -- which reads to EOF. A bird answering 500 with an
         enormous body would therefore be pulled into the tray's memory in full,
         by the error handler rather than the parser. The descriptor directory is
-        writable by anything running as this user, so a raven behaving badly is
+        writable by anything running as this user, so a bird behaving badly is
         inside the threat model rather than outside it.
 
         Asserted on how much was read rather than on elapsed time, which would
         be a machine-speed test dressed up as a correctness one.
         """
-        oversized = b"x" * (raven_client.MAX_RESPONSE_BYTES * 4)
+        oversized = b"x" * (bird_client.MAX_RESPONSE_BYTES * 4)
         read_sizes: list[int | None] = []
 
         class _HugeError(urllib.error.HTTPError):
@@ -346,37 +346,37 @@ class TestBoundedRequests:
                 chunk, self._left = self._left[:amt], self._left[amt:]
                 return chunk
 
-        with patch.object(raven_client._OPENER, "open", side_effect=_HugeError()):
-            with pytest.raises(raven_client.RavenRequestError):
-                raven_client.fetch_menu(_descriptor(47100, tmp_path))
+        with patch.object(bird_client._OPENER, "open", side_effect=_HugeError()):
+            with pytest.raises(bird_client.BirdRequestError):
+                bird_client.fetch_menu(_descriptor(47100, tmp_path))
 
         assert read_sizes, "the error body must still be drained"
         assert None not in read_sizes, "drained with an unbounded read()"
         assert sum(s for s in read_sizes if s) <= (
-            raven_client.MAX_RESPONSE_BYTES + raven_client._READ_CHUNK)
+            bird_client.MAX_RESPONSE_BYTES + bird_client._READ_CHUNK)
 
     def test_negative_content_length_is_refused(self, tmp_path):
-        server = _Raven(content_length=-1)
+        server = _Bird(content_length=-1)
         try:
-            with pytest.raises(raven_client.RavenRequestError):
-                raven_client.fetch_menu(_descriptor(server.port, tmp_path))
+            with pytest.raises(bird_client.BirdRequestError):
+                bird_client.fetch_menu(_descriptor(server.port, tmp_path))
         finally:
             server.close()
 
     def test_non_numeric_content_length_is_refused(self, tmp_path):
-        server = _Raven(content_length="banana")
+        server = _Bird(content_length="banana")
         try:
-            with pytest.raises(raven_client.RavenRequestError):
-                raven_client.fetch_menu(_descriptor(server.port, tmp_path))
+            with pytest.raises(bird_client.BirdRequestError):
+                bird_client.fetch_menu(_descriptor(server.port, tmp_path))
         finally:
             server.close()
 
     def test_redirects_are_not_followed(self, tmp_path):
         """Following one would send the attached token to an undeclared origin."""
-        server = _Raven(status=302, location="http://evil.example/")
+        server = _Bird(status=302, location="http://evil.example/")
         try:
-            with pytest.raises(raven_client.RavenRequestError) as exc:
-                raven_client.fetch_menu(_descriptor(server.port, tmp_path))
+            with pytest.raises(bird_client.BirdRequestError) as exc:
+                bird_client.fetch_menu(_descriptor(server.port, tmp_path))
             assert "302" in exc.value.reason
         finally:
             server.close()
@@ -384,28 +384,28 @@ class TestBoundedRequests:
 
 class TestResponseHandling:
     def test_empty_body(self, tmp_path):
-        server = _Raven(raw_body=b"")
+        server = _Bird(raw_body=b"")
         try:
-            with pytest.raises(raven_client.RavenRequestError) as exc:
-                raven_client.fetch_menu(_descriptor(server.port, tmp_path))
+            with pytest.raises(bird_client.BirdRequestError) as exc:
+                bird_client.fetch_menu(_descriptor(server.port, tmp_path))
             assert "empty body" in exc.value.reason
         finally:
             server.close()
 
     def test_non_json_body(self, tmp_path):
-        server = _Raven(raw_body=b"<html>nope</html>")
+        server = _Bird(raw_body=b"<html>nope</html>")
         try:
-            with pytest.raises(raven_client.RavenRequestError) as exc:
-                raven_client.fetch_menu(_descriptor(server.port, tmp_path))
+            with pytest.raises(bird_client.BirdRequestError) as exc:
+                bird_client.fetch_menu(_descriptor(server.port, tmp_path))
             assert "not JSON" in exc.value.reason
         finally:
             server.close()
 
     def test_json_array_body(self, tmp_path):
-        server = _Raven(body=[1, 2, 3])
+        server = _Bird(body=[1, 2, 3])
         try:
-            with pytest.raises(raven_client.RavenRequestError) as exc:
-                raven_client.fetch_menu(_descriptor(server.port, tmp_path))
+            with pytest.raises(bird_client.BirdRequestError) as exc:
+                bird_client.fetch_menu(_descriptor(server.port, tmp_path))
             assert "not an object" in exc.value.reason
         finally:
             server.close()
@@ -414,81 +414,81 @@ class TestResponseHandling:
         (401, "credential"), (403, "credential"), (500, "HTTP 500"), (404, "HTTP 404"),
     ])
     def test_error_statuses_become_reasons(self, tmp_path, status, fragment):
-        server = _Raven(status=status)
+        server = _Bird(status=status)
         try:
-            with pytest.raises(raven_client.RavenRequestError) as exc:
-                raven_client.fetch_menu(_descriptor(server.port, tmp_path))
+            with pytest.raises(bird_client.BirdRequestError) as exc:
+                bird_client.fetch_menu(_descriptor(server.port, tmp_path))
             assert fragment in exc.value.reason
         finally:
             server.close()
 
     def test_reason_never_leaks_an_os_error_string(self, tmp_path):
-        server = _Raven()
+        server = _Bird()
         port = server.port
         server.close()
-        with pytest.raises(raven_client.RavenRequestError) as exc:
-            raven_client.fetch_menu(_descriptor(port, tmp_path), timeout=1.0)
+        with pytest.raises(bird_client.BirdRequestError) as exc:
+            bird_client.fetch_menu(_descriptor(port, tmp_path), timeout=1.0)
         assert "Errno" not in exc.value.reason
         assert str(port) not in exc.value.reason
 
 
 class TestEndpoints:
-    def test_default_menu_endpoint(self, raven, tmp_path):
-        raven_client.fetch_menu(_descriptor(raven.port, tmp_path))
-        assert raven.requests[-1]["path"] == "/api/menu"
+    def test_default_menu_endpoint(self, bird, tmp_path):
+        bird_client.fetch_menu(_descriptor(bird.port, tmp_path))
+        assert bird.requests[-1]["path"] == "/api/menu"
 
-    def test_declared_menu_endpoint_is_used(self, raven, tmp_path):
+    def test_declared_menu_endpoint_is_used(self, bird, tmp_path):
         descriptor = _descriptor(
-            raven.port, tmp_path, endpoints={"menu": "/custom/menu"}
+            bird.port, tmp_path, endpoints={"menu": "/custom/menu"}
         )
-        raven_client.fetch_menu(descriptor)
-        assert raven.requests[-1]["path"] == "/custom/menu"
+        bird_client.fetch_menu(descriptor)
+        assert bird.requests[-1]["path"] == "/custom/menu"
 
-    def test_host_is_pinned_to_loopback(self, raven, tmp_path):
-        """A raven declares a path, never where that path lives."""
-        raven_client.fetch_menu(_descriptor(raven.port, tmp_path))
-        host = raven.header("Host")
+    def test_host_is_pinned_to_loopback(self, bird, tmp_path):
+        """A bird declares a path, never where that path lives."""
+        bird_client.fetch_menu(_descriptor(bird.port, tmp_path))
+        host = bird.header("Host")
         assert host.startswith("127.0.0.1")
 
 
 class TestSendAction:
-    def test_action_is_posted_verbatim(self, raven, tmp_path):
-        descriptor = _descriptor(raven.port, tmp_path)
-        raven_client.send_action(descriptor, "focus:session/abc-123")
-        request = raven.requests[-1]
+    def test_action_is_posted_verbatim(self, bird, tmp_path):
+        descriptor = _descriptor(bird.port, tmp_path)
+        bird_client.send_action(descriptor, "focus:session/abc-123")
+        request = bird.requests[-1]
         assert request["method"] == "POST"
         assert request["path"] == "/api/menu/action"
         assert json.loads(request["body"]) == {"id": "focus:session/abc-123"}
 
-    def test_action_carries_this_ravens_token(self, raven, tmp_path):
+    def test_action_carries_this_birds_token(self, bird, tmp_path):
         token_file = tmp_path / "token"
         token_file.write_text("tok", encoding="utf-8")
         descriptor = _descriptor(
-            raven.port, tmp_path, token_path=token_file, token_header="X-T"
+            bird.port, tmp_path, token_path=token_file, token_header="X-T"
         )
-        raven_client.send_action(descriptor, "go")
-        assert raven.header("X-T") == "tok"
+        bird_client.send_action(descriptor, "go")
+        assert bird.header("X-T") == "tok"
 
-    def test_declared_action_endpoint_is_used(self, raven, tmp_path):
+    def test_declared_action_endpoint_is_used(self, bird, tmp_path):
         descriptor = _descriptor(
-            raven.port, tmp_path, endpoints={"action": "/do"}
+            bird.port, tmp_path, endpoints={"action": "/do"}
         )
-        raven_client.send_action(descriptor, "go")
-        assert raven.requests[-1]["path"] == "/do"
+        bird_client.send_action(descriptor, "go")
+        assert bird.requests[-1]["path"] == "/do"
 
     @pytest.mark.parametrize("bad", ["", "a\r\nb", "a\x00b", "\x1b[31m"])
-    def test_unsafe_action_ids_are_refused_before_the_wire(self, raven, tmp_path, bad):
-        with pytest.raises(raven_client.RavenRequestError):
-            raven_client.send_action(_descriptor(raven.port, tmp_path), bad)
-        assert raven.requests == []
+    def test_unsafe_action_ids_are_refused_before_the_wire(self, bird, tmp_path, bad):
+        with pytest.raises(bird_client.BirdRequestError):
+            bird_client.send_action(_descriptor(bird.port, tmp_path), bad)
+        assert bird.requests == []
 
 
 class TestOpenUrl:
     def test_builds_a_loopback_url_from_the_descriptor_port(self, tmp_path):
         descriptor = _descriptor(47100, tmp_path)
-        assert raven_client.open_url(descriptor, "/console") == \
+        assert bird_client.open_url(descriptor, "/console") == \
             "http://127.0.0.1:47100/console"
 
     def test_refuses_a_non_local_path(self, tmp_path):
-        with pytest.raises(raven_client.RavenRequestError):
-            raven_client.open_url(_descriptor(47100, tmp_path), "http://evil.example/")
+        with pytest.raises(bird_client.BirdRequestError):
+            bird_client.open_url(_descriptor(47100, tmp_path), "http://evil.example/")

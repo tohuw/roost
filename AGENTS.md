@@ -6,7 +6,7 @@ Guidance for AI coding agents working in this repository. Humans should read
 ## What this project is
 
 One shared status menu bar — a macOS menu bar item and a Windows system tray
-item — for two long-running local daemons called *ravens*:
+item — for two long-running local daemons called *birds*:
 [Huginn](https://github.com/tohuw/huginn) and
 [Muninn](https://github.com/tohuw/muninn). Pure Python, stdlib plus the two
 platforms' tray toolkits, no build step.
@@ -18,14 +18,14 @@ architecture this repository deliberately removed, and reintroducing it is the
 mistake to avoid.
 
 The request that will tempt you into it is **"add a Start button for a stopped
-raven"**, because Roost replaced menu bars that had one. Read
+bird"**, because Roost replaced menu bars that had one. Read
 [SPEC.md §10](SPEC.md#10-lifecycle-quitting-restarting-and-starting) before
-writing any of it. The short version: a stopped raven has withdrawn its
+writing any of it. The short version: a stopped bird has withdrawn its
 descriptor, so there is nothing to attach a row *to*, and every way of
 manufacturing one (a registration file naming an interpreter, a descriptor that
 outlives its process, a launchd label the host looks up) ends with this process
 holding an exec path or a registry it has to trust. Quit and Restart, by contrast,
-are already possible and need nothing here — they are action ids a raven publishes
+are already possible and need nothing here — they are action ids a bird publishes
 and `host.activate` forwards, indistinguishable to Roost from `focus:abc123`. If a
 change makes them distinguishable, that is the bug.
 
@@ -34,9 +34,9 @@ change makes them distinguishable, that is the bug.
 Everything platform-neutral is shared; only the last mile is per-platform.
 
 ```
-roost/ravens.py ── descriptors: discovery, validation, liveness
+roost/birds.py ── descriptors: discovery, validation, liveness
 roost/menu_spec.py ── the menu-as-data parser
-roost/raven_client.py ── bounded per-raven HTTP with token isolation
+roost/bird_client.py ── bounded per-bird HTTP with token isolation
       │
 roost/host.py ── host election (the lock) + menu aggregation
       │
@@ -49,22 +49,22 @@ All paths below are relative to `roost/`.
 
 | File | Role |
 |---|---|
-| `ravens.py` | Descriptor path resolution, parsing, validation, PID-reuse-safe liveness |
-| `menu_spec.py` | Parses and bounds a raven's menu payload |
-| `raven_client.py` | Per-raven HTTP client; per-raven token isolation |
+| `birds.py` | Descriptor path resolution, parsing, validation, PID-reuse-safe liveness |
+| `menu_spec.py` | Parses and bounds a bird's menu payload |
+| `bird_client.py` | Per-bird HTTP client; per-bird token isolation |
 | `host.py` | `HostLock` (host election) and `build_model` (aggregation) |
 | `tray.py` | Turns a model into a flat `Row` list — the only place that decides menu content |
 | `menubar.py` | macOS rendering of those rows, plus the entry point |
 | `windows_tray.py` | Windows rendering of the same rows |
 | `windows_support.py` | Windows shortcuts, user PATH/environment, tray process |
 | `help_server.py` | The one loopback listener: the Help page and `/api/status` |
-| `icons.py` | The tray icon: the raven, resolved per platform |
-| `launcher.py` | Asks the OS supervisor to start a stopped raven, by identifier |
+| `icons.py` | The tray icon: the bird, resolved per platform |
+| `launcher.py` | Asks the OS supervisor to start a stopped bird, by identifier |
 | `paths.py` | Roost's own state directory and the owner-only write helpers |
 | `sanitize.py` | Strips escapes/controls/bidi from untrusted strings |
-| `cli.py` | CLI: `install`, `uninstall`, `ui`, `ravens` |
+| `cli.py` | CLI: `install`, `uninstall`, `ui`, `birds` |
 | `__init__.py` | The product name and slug; the package docstring explains why the package exists |
-| `../examples/` | Two runnable reference ravens — documentation, not libraries. Both real ravens are now shipped too; `examples/README.md` links them |
+| `../examples/` | Two runnable reference birds — documentation, not libraries. Both real birds are now shipped too; `examples/README.md` links them |
 
 `menubar.py` guards its macOS-only imports so it stays importable elsewhere.
 `windows_support.py` imports Windows-only packages *inside functions* for the same
@@ -91,8 +91,8 @@ either tray's rendering, that file is the one that catches the drift.
 
 ## Rules
 
-- **The host never interprets a raven's data.** It draws labels and hands action
-  ids back. No special case for any raven's name or id, ever — both trays had
+- **The host never interprets a bird's data.** It draws labels and hands action
+  ids back. No special case for any bird's name or id, ever — both trays had
   previously hardcoded the same one participant's id, independently of each other,
   and `test_tray.py` plus both tray suites now assert its absence by grepping the
   source.
@@ -104,18 +104,18 @@ either tray's rendering, that file is the one that catches the drift.
 - **A descriptor is untrusted input.** It is a file another process wrote.
   Validate every field, never `eval`/`exec`, never let a control character or ANSI
   escape reach a menu or a log, and treat a malformed descriptor as an
-  **unavailable raven with a reason** — never a crash, never a silent omission.
+  **unavailable bird with a reason** — never a crash, never a silent omission.
   Descriptor fields are *refused*; menu labels are *sanitised* (see
   [SPEC.md §4](SPEC.md#4-the-menu) for why the two differ).
 
 - **Version compatibility is a range, not an equality.** `MIN_API_VERSION..API_VERSION`
-  overlapping the raven's declared window. Exact matching is huginn issue #38,
+  overlapping the bird's declared window. Exact matching is huginn issue #38,
   where a routine bump silently disabled every participant. An incompatibility must
   be reported *with both ranges named*.
 
-- **Per-raven token isolation.** A token is read fresh from *that raven's own*
-  `token_path` and sent only to *that raven's own* port. Never cache one, never
-  share one between ravens, never mint one on a raven's behalf. Request headers are
+- **Per-bird token isolation.** A token is read fresh from *that bird's own*
+  `token_path` and sent only to *that bird's own* port. Never cache one, never
+  share one between birds, never mint one on a bird's behalf. Request headers are
   built per call from an allowlist — never copied from anything inbound.
 
 - **Everything binds `127.0.0.1`, and nothing is relayed.** The previous hook proxy
@@ -128,10 +128,10 @@ either tray's rendering, that file is the one that catches the drift.
   network call with a timeout, and keep the `nosniff`/CSP headers. **Do not add a
   proxy.**
 
-- **Every call to a raven is bounded.** A raven is another process that can hang,
+- **Every call to a bird is bounded.** A bird is another process that can hang,
   and the client runs on the thread that builds the menu. Timeout, response cap
   enforced on the read (not on the declared `Content-Length`), no redirects. A hung
-  raven must degrade to a disabled section, never to a frozen menu.
+  bird must degrade to a disabled section, never to a frozen menu.
 
 - **Roost's own state is owner-only.** Everything in Roost's state directory — the host
   lock, the help port file, the tray PID file — is 0600 under a
@@ -148,13 +148,13 @@ either tray's rendering, that file is the one that catches the drift.
   copy**, not documentation. It uses a Markdown table, which needs the `tables`
   extension *and* the table tags in the `nh3` allowlist — a test pins both.
 
-- **Keep `SPEC.md` and `examples/` in step.** SPEC.md is the contract both ravens
+- **Keep `SPEC.md` and `examples/` in step.** SPEC.md is the contract both birds
   implement; the examples are its executable form. A protocol change that lands in
   one and not the other is worse than no change.
 
 - **Do not edit the huginn or muninn repositories from here.** The reference
   implementations live in `examples/` precisely so this repository can document the
-  contract without reaching into its consumers. Both projects now ship a real raven
+  contract without reaching into its consumers. Both projects now ship a real bird
   and `SPEC.md`/`examples/README.md` link to them — a link is the whole of the
   allowed coupling, and a protocol change is a note to their maintainers, not a
   commit in their tree.
@@ -165,7 +165,7 @@ either tray's rendering, that file is the one that catches the drift.
   looks like whatever was last picked is harder to find, not easier. The spare
   artwork stays in `assets/` and stays credited.
 
-- **The raven icon is a licence obligation.** *Raven* by Lorc, game-icons.net, CC
+- **The bird icon is a licence obligation.** *Bird* by Lorc, game-icons.net, CC
   BY 3.0. `roost/assets/CREDITS.md` must keep crediting it for as long as the art
   is here. If the art goes, the credit goes with it; if art is added, credit it
   before shipping.
@@ -216,7 +216,19 @@ Concretely, this is why the code looks the way it does:
   something this project owns, that file is what tells you whether you just created
   a collision. Do not weaken an assertion in it to make a change pass.
 
-- **The ravens descriptor directory is the exception.** `~/.local/state/ravens`
-  and `%LOCALAPPDATA%\Ravens` are a cross-project contract that Huginn and Muninn
-  write into. It is not Roost's to rename, and `ravens.state_dir()` must keep
-  resolving exactly what it resolves today.
+- **The bird descriptor directory is the exception.** `~/.local/state/birds` and
+  `%LOCALAPPDATA%\Birds` are a cross-project contract, not a name Roost owns.
+
+  **Roost reads two directories, and must keep doing so.** Huginn and Muninn
+  publish into the pre-rename `ravens` directory, and will until `corvidae` is
+  next released, because they resolve the location through that package rather
+  than through Roost. `birds.legacy_state_dir()` and the merge inside
+  `birds.discover()` are what let this repository rename its vocabulary without a
+  commit in either raven's tree — remove either and a working menu empties with
+  nothing on screen to explain why. `TestLegacyDirectory` pins it.
+
+  A **bird** publishes to exactly one directory: the current one. Reading the
+  legacy location is the host's compatibility burden and never a publisher's.
+
+  When `corvidae` moves, that read becomes dead weight and can go. Until then it
+  is load-bearing.

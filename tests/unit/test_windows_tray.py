@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from roost import host
 from roost import icons
 from roost import menu_spec
-from roost import ravens
+from roost import birds
 from roost import tray
 from roost import windows_tray
 from roost.tray import RowKind
@@ -52,7 +52,7 @@ def isolated_state(monkeypatch, tmp_path):
 
 
 def _descriptor(name="huginn", port=47100):
-    return ravens.RavenDescriptor(
+    return birds.BirdDescriptor(
         name=name, display=name.title(), api_version=1, min_api=1, max_api=1,
         pid=1, port=port, token_path=None, token_header="", endpoints={},
         host_priority=0, started=None, path=Path(f"/tmp/{name}.json"),
@@ -63,7 +63,7 @@ def _live_menu(name="huginn", *labels, badge=0):
     items = tuple(
         menu_spec.MenuItem(label=label, action_id=f"act:{label}") for label in labels
     )
-    return menu_spec.RavenMenu(
+    return menu_spec.BirdMenu(
         name=name, display=name.title(),
         spec=menu_spec.MenuSpec(badge=badge, sections=(
             menu_spec.MenuSection(id="s", title="Sessions", items=items),
@@ -96,7 +96,7 @@ class TestRendering:
         assert _tray()._render(tray.Row(RowKind.SEPARATOR)) is _FakeMenu.SEPARATOR
 
     def test_an_enabled_item_is_clickable(self):
-        row = tray.Row(RowKind.ITEM, label="Approve", raven="huginn", enabled=True,
+        row = tray.Row(RowKind.ITEM, label="Approve", bird="huginn", enabled=True,
                        item=menu_spec.MenuItem(label="Approve", action_id="a"))
         assert _tray()._render(row).action is not None
 
@@ -108,7 +108,7 @@ class TestRendering:
         assert item.action is None
         assert item.text == "Approve"
 
-    @pytest.mark.parametrize("kind", [RowKind.RAVEN, RowKind.REASON, RowKind.SECTION])
+    @pytest.mark.parametrize("kind", [RowKind.BIRD, RowKind.REASON, RowKind.SECTION])
     def test_structural_rows_are_shown_and_inert(self, kind):
         item = _tray()._render(tray.Row(kind, label="Text"))
         assert item.enabled is False
@@ -125,9 +125,9 @@ class TestRendering:
         assert tray.HELP_LABEL in texts
         assert tray.QUIT_LABEL in texts
 
-    def test_an_unavailable_raven_renders_with_its_reason(self, monkeypatch):
+    def test_an_unavailable_bird_renders_with_its_reason(self, monkeypatch):
         model = host.MenuModel((
-            menu_spec.RavenMenu(name="muninn", display="Muninn",
+            menu_spec.BirdMenu(name="muninn", display="Muninn",
                                 reason="Is not answering."),
         ))
         monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
@@ -135,15 +135,15 @@ class TestRendering:
         assert "Muninn" in texts
         assert "Is not answering." in texts
 
-    def test_no_ravens_at_all_says_so(self, monkeypatch):
+    def test_no_birds_at_all_says_so(self, monkeypatch):
         monkeypatch.setattr(host, "build_model", lambda *_a, **_k: host.MenuModel())
-        assert tray.NO_RAVENS_LABEL in _texts(_tray()._build_menu())
+        assert tray.NO_BIRDS_LABEL in _texts(_tray()._build_menu())
 
 
 # ── Activation ────────────────────────────────────────────────────────────────
 
 class TestActivation:
-    def test_a_click_is_forwarded_to_the_publishing_raven(self, monkeypatch):
+    def test_a_click_is_forwarded_to_the_publishing_bird(self, monkeypatch):
         model = host.MenuModel((_live_menu("huginn", "Approve"),))
         monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
         seen = []
@@ -154,7 +154,7 @@ class TestActivation:
         instance = _tray(model)
         instance._refresh = lambda *_a: None
         instance._activate(tray.Row(
-            RowKind.ITEM, label="Approve", raven="huginn", enabled=True,
+            RowKind.ITEM, label="Approve", bird="huginn", enabled=True,
             item=model.menus[0].spec.sections[0].items[0],
         ))
         assert seen == [("huginn", "act:Approve")]
@@ -167,20 +167,20 @@ class TestActivation:
         instance = _tray(model)
         instance._refresh = lambda *_a: None
         instance._activate(tray.Row(
-            RowKind.ITEM, label="Console", raven="huginn", enabled=True,
+            RowKind.ITEM, label="Console", bird="huginn", enabled=True,
             item=model.menus[0].spec.sections[0].items[0],
         ))
         assert opened == ["http://127.0.0.1:47100/"]
 
-    def test_a_click_on_a_vanished_raven_does_nothing(self, monkeypatch):
+    def test_a_click_on_a_vanished_bird_does_nothing(self, monkeypatch):
         monkeypatch.setattr(
             host, "activate",
-            lambda *_a: pytest.fail("activate must not run for a missing raven"),
+            lambda *_a: pytest.fail("activate must not run for a missing bird"),
         )
         instance = _tray(host.MenuModel())
         instance._refresh = lambda *_a: None
         instance._activate(tray.Row(
-            RowKind.ITEM, label="Gone", raven="huginn", enabled=True,
+            RowKind.ITEM, label="Gone", bird="huginn", enabled=True,
             item=menu_spec.MenuItem(label="Gone", action_id="a"),
         ))
 
@@ -217,8 +217,8 @@ class TestLifecycle:
         assert instance._stop_event.is_set() is True
         instance._icon.stop.assert_called_once_with()
 
-    def test_quit_stops_no_raven(self):
-        """There is no Quit All: the ravens are daemons the tray does not own.
+    def test_quit_stops_no_bird(self):
+        """There is no Quit All: the birds are daemons the tray does not own.
 
         The tray spawns nothing and signals nothing. It does *install* SIGTERM
         and SIGINT handlers so it can close its own window cleanly, which is the
@@ -275,7 +275,7 @@ class TestNoLauncherRemains:
         """None of Appistry's app-launching machinery came along.
 
         Matched on whole module names, not substrings: `roost.launcher` asks a
-        supervisor to start a *raven* by identifier, which is a different thing
+        supervisor to start a *bird* by identifier, which is a different thing
         from Appistry's `launch` module that ran arbitrary apps -- and a
         substring check called the legitimate one a violation.
         """
@@ -291,7 +291,7 @@ class TestNoLauncherRemains:
         for forbidden in ("process", "registry", "launch", "cleanup", "menubar"):
             assert forbidden not in imported, forbidden
 
-    def test_no_raven_id_is_special_cased(self):
+    def test_no_bird_id_is_special_cased(self):
         source = Path(windows_tray.__file__).read_text(encoding="utf-8")
         for name in ("huginn", "muninn", "Huginn", "Muninn"):
             assert name not in source, name
@@ -313,7 +313,7 @@ class TestItDrawsTheSharedRows:
     def test_the_rendered_labels_are_exactly_the_row_labels(self, monkeypatch):
         model = host.MenuModel((
             _live_menu("huginn", "Approve", badge=2),
-            menu_spec.RavenMenu(name="muninn", display="Muninn", reason="Gone."),
+            menu_spec.BirdMenu(name="muninn", display="Muninn", reason="Gone."),
         ))
         monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
 

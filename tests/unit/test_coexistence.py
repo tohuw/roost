@@ -32,7 +32,7 @@ from roost import cli
 from roost import help_server
 from roost import host
 from roost import paths
-from roost import ravens
+from roost import birds
 from roost import windows_support
 
 REPO = Path(__file__).resolve().parents[2]
@@ -337,7 +337,7 @@ class TestPorts:
         Scanning for four-digit *numbers* would flag the badge cap, the
         host_priority range, and a millisecond timeout, so this looks at the
         socket call sites instead: a ``bind``/``connect`` tuple or a URL, which is
-        where a fixed port would actually have to appear to matter. A raven's port
+        where a fixed port would actually have to appear to matter. A bird's port
         arrives from its descriptor and is interpolated, never written down.
         """
         package = Path(paths.__file__).parent
@@ -416,7 +416,7 @@ class TestEnvironmentVariables:
             assert APPISTRY_ENV_PREFIX not in source, module.name
 
 
-class TestTheSharedRavenContractIsUnchanged:
+class TestTheSharedBirdContractIsUnchanged:
     """The one directory that is deliberately *not* renamed.
 
     The descriptor directory is a cross-project contract: Huginn and Muninn write
@@ -426,25 +426,25 @@ class TestTheSharedRavenContractIsUnchanged:
     """
 
     def test_the_descriptor_directory_keeps_its_shared_name(self, monkeypatch):
-        monkeypatch.delenv("RAVENS_STATE_DIR", raising=False)
+        monkeypatch.delenv("BIRDS_STATE_DIR", raising=False)
         monkeypatch.delenv("XDG_STATE_HOME", raising=False)
-        monkeypatch.setattr(ravens, "_IS_WINDOWS", False)
-        assert ravens.state_dir() == Path.home() / ".local" / "state" / "ravens"
+        monkeypatch.setattr(birds, "_IS_WINDOWS", False)
+        assert birds.state_dir() == Path.home() / ".local" / "state" / "birds"
 
     def test_the_windows_descriptor_directory_keeps_its_shared_name(
         self, monkeypatch, tmp_path
     ):
-        monkeypatch.delenv("RAVENS_STATE_DIR", raising=False)
-        monkeypatch.setattr(ravens, "_IS_WINDOWS", True)
+        monkeypatch.delenv("BIRDS_STATE_DIR", raising=False)
+        monkeypatch.setattr(birds, "_IS_WINDOWS", True)
         monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
-        assert ravens.state_dir() == tmp_path / "Local" / "Ravens"
+        assert birds.state_dir() == tmp_path / "Local" / "Birds"
 
     def test_the_descriptor_directory_is_not_roosts_own_state_directory(self):
         """Shared and private state are different things and must not merge.
 
-        A raven's descriptor is written by another process; Roost's lock and port
-        file are not. Putting them in one directory would mean a raven could
+        A bird's descriptor is written by another process; Roost's lock and port
+        file are not. Putting them in one directory would mean a bird could
         overwrite the host's lock.
         """
         monkey_free_state = paths.STATE_DIR
-        assert monkey_free_state != ravens.state_dir()
+        assert monkey_free_state != birds.state_dir()
