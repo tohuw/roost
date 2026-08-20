@@ -1,6 +1,6 @@
-"""Text sanitising for strings that arrive from a raven.
+"""Text sanitising for strings that arrive from a bird.
 
-A raven descriptor and a raven's menu payload are **untrusted input**: they are
+A bird descriptor and a bird's menu payload are **untrusted input**: they are
 files and HTTP responses written by another process, and Roost renders them
 into a desktop menu and into its own log file. Two attack shapes matter:
 
@@ -12,7 +12,7 @@ into a desktop menu and into its own log file. Two attack shapes matter:
   produced it (``Quit`` that is really ``tiuQ``, a plausible-looking action id
   hidden behind a benign label).
 
-So nothing from a raven reaches a menu or a log without passing through here.
+So nothing from a bird reaches a menu or a log without passing through here.
 The functions are deliberately allow-shaped: strip escapes, remove every
 character with no business in a one-line label, collapse whitespace, and cap the
 length.
@@ -60,7 +60,7 @@ def contains_unsafe_text(value: str) -> bool:
     """Return True if ``value`` holds an escape, control, or spoofing character.
 
     Used where the right answer is to *reject* rather than repair — a descriptor
-    field, where a control character means the file is malformed and the raven
+    field, where a control character means the file is malformed and the bird
     should be reported unavailable with a reason instead of silently cleaned up.
     """
     if not isinstance(value, str):

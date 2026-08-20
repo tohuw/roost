@@ -1,4 +1,4 @@
-"""Roost — one shared status menu bar for the ravens.
+"""Roost — one shared status menu bar for every bird on the machine.
 
 Everything lives inside this package rather than as top-level modules, and that
 is a coexistence requirement rather than a matter of taste. This project was

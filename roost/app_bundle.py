@@ -1,6 +1,6 @@
 """Managed macOS Finder entry for Roost's own menu-bar process.
 
-This launches Roost only.  It does not know about, start, or supervise ravens.
+This launches Roost only.  It does not know about, start, or supervise birds.
 """
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ def install() -> Path | None:
     # launchd domain. Activating that agent is the same route used at login and
     # avoids a Finder-launched duplicate winning the host lock while the intended
     # supervisor remains stopped. This controls Roost only; it never names or
-    # starts a raven.
+    # starts a bird.
     launcher = (
         "#!/bin/sh\n"
         "exec /bin/launchctl kickstart -k \"gui/$(/usr/bin/id -u)/com.tohuw.roost\"\n"

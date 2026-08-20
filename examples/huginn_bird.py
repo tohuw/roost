@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Reference raven: the leading one, with a token and per-item actions.
+"""Reference bird: the leading one, with a token and per-item actions.
 
-A worked, runnable implementation of the raven side of ``SPEC.md``, standing in
+A worked, runnable implementation of the bird side of ``SPEC.md``, standing in
 for Huginn — an agent activity console whose menu is a live list of sessions,
 some of which want the user's attention.
 
@@ -11,7 +11,7 @@ contract has an executable form to read and to disagree with.
 
 Run it:
 
-    python3 examples/huginn_raven.py
+    python3 examples/huginn_bird.py
 
 It binds a free loopback port, mints a token, publishes its descriptor, serves
 ``/api/menu`` and ``/api/menu/action``, and removes the descriptor on exit.
@@ -19,34 +19,34 @@ It binds a free loopback port, mints a token, publishes its descriptor, serves
 Four things here are the contract, not this example's preference:
 
 **Declare a range, not a version.** ``min_api``/``max_api`` describe the window
-this raven speaks, and Roost renders it if that window overlaps its own.
+this bird speaks, and Roost renders it if that window overlaps its own.
 Comparing for equality is the bug behind huginn issue #38 — a routine bump
 silently disabled every participant with nothing on screen to explain it.
 
 **Publish last, remove on exit.** The descriptor is written *after* the port is
 listening, so the host never finds a descriptor pointing at a port that is not
-yet accepting connections. It is removed on shutdown, so a stopped raven has no
+yet accepting connections. It is removed on shutdown, so a stopped bird has no
 descriptor rather than a stale one — though the host also survives the crash
 case, because it checks the recorded PID before trusting the file.
 
-**Own the token.** This raven mints its own, writes it 0600, and names the file
+**Own the token.** This bird mints its own, writes it 0600, and names the file
 in its descriptor. Roost reads it fresh per request and sends it only here.
-Roost never mints or shares a credential, so authentication is the raven's to
+Roost never mints or shares a credential, so authentication is the bird's to
 provide.
 
 **Defend the port.** A loopback port is reachable by any web page the user has
 open, so ``Host`` must be loopback and any ``Origin`` is refused. That check is
-the raven's own — the host is not a security boundary on the raven's behalf.
+the bird's own — the host is not a security boundary on the bird's behalf.
 
 It also shows the lifecycle rows of ``SPEC.md`` §10 — a **Quit** that stops *this*
 process. There is nothing special about them: they are action ids like any other,
 and the host cannot tell them apart from ``focus:s-1``. What they demonstrate is
-the one ordering rule that is easy to get wrong — **answer, then exit**. A raven
+the one ordering rule that is easy to get wrong — **answer, then exit**. A bird
 that terminates inside its own request handler makes a successful quit look like a
 failed action to the host, which is still waiting for a response.
 
 There is deliberately **no Start row**, because there cannot be one: a stopped
-raven has withdrawn its descriptor, so the host has nothing to draw. Starting is
+bird has withdrawn its descriptor, so the host has nothing to draw. Starting is
 the OS supervisor's job (§10).
 """
 
@@ -70,12 +70,12 @@ from pathlib import Path
 NAME = "huginn"
 DISPLAY = "Huginn"
 
-#: The protocol range this raven speaks. A range, never an equality — see the
+#: The protocol range this bird speaks. A range, never an equality — see the
 #: module docstring.
 MIN_API = 1
 MAX_API = 1
 
-#: Higher sorts earlier in the shared menu. Huginn leads when both ravens are
+#: Higher sorts earlier in the shared menu. Huginn leads when both birds are
 #: present; when it is absent Muninn's section simply sorts first and the same
 #: menu runs standalone. Roost does not know either name — the ordering is
 #: entirely this number.
@@ -83,8 +83,8 @@ HOST_PRIORITY = 100
 
 TOKEN_HEADER = "X-Huginn-Token"
 
-#: The action id for the lifecycle row this raven publishes. A plain id in this
-#: raven's own vocabulary — the protocol reserves no word for it, and the host
+#: The action id for the lifecycle row this bird publishes. A plain id in this
+#: bird's own vocabulary — the protocol reserves no word for it, and the host
 #: attaches no meaning to it (SPEC.md §10).
 QUIT_ACTION = "quit"
 
@@ -100,34 +100,34 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 def state_dir() -> Path:
     """Return the shared descriptor directory.
 
-    This resolution order *is* the contract, and both ravens must implement it
+    This resolution order *is* the contract, and both birds must implement it
     identically or they will publish where the host is not looking:
 
-    1. ``$RAVENS_STATE_DIR`` when set and non-empty.
-    2. Windows: ``%LOCALAPPDATA%\\Ravens``, falling back to
-       ``~\\AppData\\Local\\Ravens``.
-    3. POSIX: ``$XDG_STATE_HOME/ravens``, falling back to
-       ``~/.local/state/ravens``.
+    1. ``$BIRDS_STATE_DIR`` when set and non-empty.
+    2. Windows: ``%LOCALAPPDATA%\\Birds``, falling back to
+       ``~\\AppData\\Local\\Birds``.
+    3. POSIX: ``$XDG_STATE_HOME/birds``, falling back to
+       ``~/.local/state/birds``.
 
-    Honouring ``XDG_STATE_HOME`` is not optional even if a raven's own state
+    Honouring ``XDG_STATE_HOME`` is not optional even if a bird's own state
     directory ignores it: this directory is shared, and putting it somewhere the
     other participant does not expect breaks discovery for both.
     """
-    override = os.environ.get("RAVENS_STATE_DIR", "").strip()
+    override = os.environ.get("BIRDS_STATE_DIR", "").strip()
     if override:
         return Path(override).expanduser()
     if sys.platform == "win32":
         local = os.environ.get("LOCALAPPDATA", "").strip()
         base = Path(local) if local else Path.home() / "AppData" / "Local"
-        return base / "Ravens"
+        return base / "Birds"
     xdg = os.environ.get("XDG_STATE_HOME", "").strip()
     base = Path(xdg) if xdg else Path.home() / ".local" / "state"
-    return base / "ravens"
+    return base / "birds"
 
 
-# ── This raven's state ────────────────────────────────────────────────────────
+# ── This bird's state ────────────────────────────────────────────────────────
 #
-# Hardcoded on purpose: a real raven has its own model and its own store, and the
+# Hardcoded on purpose: a real bird has its own model and its own store, and the
 # whole point of the contract is that Roost cannot tell the difference.
 
 SESSIONS = [
@@ -149,7 +149,7 @@ _shutdown_requested = threading.Event()
 
 
 def build_menu() -> dict:
-    """Return this raven's whole menu contribution.
+    """Return this bird's whole menu contribution.
 
     The host renders these labels and hands the ``id`` values back untouched. It
     does not know what ``focus:s-1`` means, and it must not need to — which is
@@ -176,7 +176,7 @@ def build_menu() -> dict:
                     "label": session["title"],
                     "detail": session["agent"],
                     # "attention" is an intent, not styling: the host maps it to
-                    # its own presentation. A raven cannot supply a marker of its
+                    # its own presentation. A bird cannot supply a marker of its
                     # own, because that would be styling by another name.
                     "style": "attention",
                 }
@@ -193,7 +193,7 @@ def build_menu() -> dict:
         for session in others
     ]
     items.append({"separator": True})
-    # A link row: the host opens it against this raven's own port, so a raven
+    # A link row: the host opens it against this bird's own port, so a bird
     # cannot navigate the user anywhere it does not itself serve.
     items.append({"id": "open-console", "label": "Open Console", "url": "/"})
     sections.append({"id": "sessions", "title": "Sessions", "items": items})
@@ -211,10 +211,10 @@ def build_menu() -> dict:
     return {
         "api_version": MAX_API,
         # The host uses this in place of the descriptor's display name when
-        # present, so a raven can retitle its own section as its state changes.
+        # present, so a bird can retitle its own section as its state changes.
         "title": DISPLAY,
-        # The host shows this beside the name and sums it across ravens. It is
-        # this raven's own number; Roost does not compute it and does not know
+        # The host shows this beside the name and sums it across birds. It is
+        # this bird's own number; Roost does not compute it and does not know
         # what it counts.
         "badge": len(attention),
         "sections": sections,
@@ -222,11 +222,11 @@ def build_menu() -> dict:
 
 
 def perform_action(action_id: str) -> dict:
-    """Act on an id this raven published.
+    """Act on an id this bird published.
 
-    The id is this raven's own vocabulary, round-tripped through the host
+    The id is this bird's own vocabulary, round-tripped through the host
     unchanged. It still arrives over HTTP from another process, so it is matched
-    against what this raven actually issued rather than parsed for meaning.
+    against what this bird actually issued rather than parsed for meaning.
 
     ``quit`` does **not** exit here, and that is the point worth copying: this
     function's return value still has to be serialised and written to the socket.
@@ -269,7 +269,7 @@ def write_token(directory: Path) -> tuple[str, Path]:
 # ── Descriptor ────────────────────────────────────────────────────────────────
 
 def publish(directory: Path, port: int, token_path: Path) -> Path:
-    """Write this raven's descriptor atomically.
+    """Write this bird's descriptor atomically.
 
     Atomic because the host may read at any moment and must never see a
     half-written file. The temp file is created in the same directory so the
@@ -285,7 +285,7 @@ def publish(directory: Path, port: int, token_path: Path) -> Path:
         "pid": os.getpid(),
         "port": port,
         # The host cross-checks this against the OS's record of when the process
-        # began, so a recycled PID cannot pass as a live raven. That is the only
+        # began, so a recycled PID cannot pass as a live bird. That is the only
         # reason the field exists.
         "started": time.time(),
         "host_priority": HOST_PRIORITY,
@@ -311,7 +311,7 @@ def publish(directory: Path, port: int, token_path: Path) -> Path:
 
 
 def withdraw(descriptor: Path, token_path: Path) -> None:
-    """Remove the descriptor and token so a stopped raven leaves nothing behind.
+    """Remove the descriptor and token so a stopped bird leaves nothing behind.
 
     Best-effort: if this never runs (a hard kill, a power loss) the host still
     copes, because it checks the recorded PID before trusting the descriptor. A
@@ -327,7 +327,7 @@ def withdraw(descriptor: Path, token_path: Path) -> None:
 # ── HTTP ──────────────────────────────────────────────────────────────────────
 
 class _Handler(BaseHTTPRequestHandler):
-    """The raven's own API. It defends itself; the host is not its guard."""
+    """The bird's own API. It defends itself; the host is not its guard."""
 
     token = ""
     protocol_version = "HTTP/1.1"
@@ -468,7 +468,7 @@ def main() -> int:
     server = _Server(("127.0.0.1", port), _Handler)
 
     # Publish only after the socket is bound. A descriptor naming a port that is
-    # not yet listening would make the host report a healthy raven as
+    # not yet listening would make the host report a healthy bird as
     # unreachable during startup.
     descriptor = publish(directory, port, token_path)
 
@@ -479,7 +479,7 @@ def main() -> int:
     print(f"{DISPLAY} listening on http://127.0.0.1:{port}")
     print(f"  descriptor {descriptor}")
     print(f"  token      {token_path}")
-    print("Ctrl-C to stop, or use this raven's own Quit row in the menu.")
+    print("Ctrl-C to stop, or use this bird's own Quit row in the menu.")
 
     # serve_forever() runs on its own thread so this one can wait on the quit
     # event. Calling shutdown() from inside a request handler would deadlock:

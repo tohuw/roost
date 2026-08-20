@@ -1,9 +1,9 @@
 """Menu-as-data parsing tests.
 
-The contract under test is that Roost renders a raven's menu without
+The contract under test is that Roost renders a bird's menu without
 interpreting it, and that it cannot be made to render something dangerous or
 unbounded. So: labels are sanitised, action ids are forwarded opaquely, URLs stay
-raven-local, and every dimension of the payload is bounded.
+bird-local, and every dimension of the payload is bounded.
 """
 
 import sys
@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from roost import menu_spec
-from roost import ravens
+from roost import birds
 from roost import sanitize
 
 
@@ -57,12 +57,12 @@ class TestParseItem:
         assert item.style == "attention"
 
     def test_unknown_style_falls_back_to_normal(self):
-        """A raven cannot supply arbitrary presentation."""
+        """A bird cannot supply arbitrary presentation."""
         item = menu_spec.parse_item({"id": "a", "label": "Row", "style": "<script>"})
         assert item.style == "normal"
 
     def test_unknown_fields_are_dropped_not_rejected(self):
-        """A newer raven in range must be able to add a field, per huginn #38."""
+        """A newer bird in range must be able to add a field, per huginn #38."""
         item = menu_spec.parse_item({
             "id": "a", "label": "Row", "future_field": {"nested": [1, 2]},
         })
@@ -139,7 +139,7 @@ class TestLabelSanitising:
 
 class TestActionIdForwarding:
     def test_action_id_is_opaque_to_roost(self):
-        """Roost does not parse the id; it round-trips whatever the raven sent."""
+        """Roost does not parse the id; it round-trips whatever the bird sent."""
         weird = "session/abc-123:focus?x=1&y=2"
         item = menu_spec.parse_item({"id": weird, "label": "Row"})
         assert item.action_id == weird
@@ -304,48 +304,48 @@ class TestParseMenu:
         assert spec.sections == ()
 
 
-class TestRavenMenu:
+class TestBirdMenu:
     def test_unavailable_carries_a_reason(self):
-        raven = ravens.UnavailableRaven("muninn", "Muninn", "Not running.", None)
-        menu = menu_spec.unavailable(raven)
+        bird = birds.UnavailableBird("muninn", "Muninn", "Not running.", None)
+        menu = menu_spec.unavailable(bird)
         assert menu.available is False
         assert menu.reason == "Not running."
         assert menu.display == "Muninn"
 
     def test_unavailable_reason_is_sanitised(self):
-        raven = ravens.UnavailableRaven("m", "\x1b[31mM", "\x1b[2Jgone", None)
-        menu = menu_spec.unavailable(raven)
+        bird = birds.UnavailableBird("m", "\x1b[31mM", "\x1b[2Jgone", None)
+        menu = menu_spec.unavailable(bird)
         assert not sanitize.contains_unsafe_text(menu.reason)
         assert not sanitize.contains_unsafe_text(menu.display)
 
     def test_unavailable_always_has_some_reason(self):
-        raven = ravens.UnavailableRaven("m", "M", "", None)
-        assert menu_spec.unavailable(raven).reason == "Unavailable."
+        bird = birds.UnavailableBird("m", "M", "", None)
+        assert menu_spec.unavailable(bird).reason == "Unavailable."
 
     def test_unavailable_falls_back_to_a_name(self):
-        raven = ravens.UnavailableRaven("muninn", "\x00", "why", None)
-        assert menu_spec.unavailable(raven).display == "muninn"
+        bird = birds.UnavailableBird("muninn", "\x00", "why", None)
+        assert menu_spec.unavailable(bird).display == "muninn"
 
     def test_signature_changes_when_a_label_changes(self):
-        first = menu_spec.RavenMenu("h", "H", menu_spec.parse_menu(
+        first = menu_spec.BirdMenu("h", "H", menu_spec.parse_menu(
             _payload(_section({"id": "a", "label": "One"}))))
-        second = menu_spec.RavenMenu("h", "H", menu_spec.parse_menu(
+        second = menu_spec.BirdMenu("h", "H", menu_spec.parse_menu(
             _payload(_section({"id": "a", "label": "Two"}))))
         assert first.signature() != second.signature()
 
     def test_signature_is_stable_for_identical_input(self):
         payload = _payload(_section({"id": "a", "label": "One"}))
-        first = menu_spec.RavenMenu("h", "H", menu_spec.parse_menu(payload))
-        second = menu_spec.RavenMenu("h", "H", menu_spec.parse_menu(payload))
+        first = menu_spec.BirdMenu("h", "H", menu_spec.parse_menu(payload))
+        second = menu_spec.BirdMenu("h", "H", menu_spec.parse_menu(payload))
         assert first.signature() == second.signature()
 
     def test_signature_changes_when_a_reason_appears(self):
-        ok = menu_spec.RavenMenu("h", "H", menu_spec.parse_menu(
+        ok = menu_spec.BirdMenu("h", "H", menu_spec.parse_menu(
             _payload(_section({"id": "a", "label": "One"}))))
-        broken = menu_spec.RavenMenu("h", "H", reason="Not running.")
+        broken = menu_spec.BirdMenu("h", "H", reason="Not running.")
         assert ok.signature() != broken.signature()
 
     def test_signature_is_hashable(self):
-        menu = menu_spec.RavenMenu("h", "H", menu_spec.parse_menu(
+        menu = menu_spec.BirdMenu("h", "H", menu_spec.parse_menu(
             _payload(_section({"id": "a", "label": "One"}))))
         assert hash(menu.signature())

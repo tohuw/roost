@@ -213,7 +213,7 @@ class TestRendering:
         assert any(byte > 0x7F for byte in raw), "the precondition no longer holds"
 
     def test_the_unavailability_table_actually_renders(self):
-        """help.md explains the "why is my raven greyed out?" reasons in a table.
+        """help.md explains the "why is my bird greyed out?" reasons in a table.
 
         Markdown needs the ``tables`` extension for that, and nh3 needs the table
         tags in its allowlist. Miss either and the table silently degrades to a
@@ -227,11 +227,11 @@ class TestRendering:
         assert "|---|" not in page, "the table fell through as literal Markdown"
 
     def test_the_shipped_help_page_covers_the_unavailable_case(self):
-        """A greyed-out raven is the state users need explained, so it must be
+        """A greyed-out bird is the state users need explained, so it must be
         documented in the copy that is actually served."""
         page = help_server.render_help_page()
         assert "Not running" in page
-        assert "roost ravens" in page
+        assert "roost birds" in page
 
     def test_the_page_renders_under_a_legacy_default_encoding(self, monkeypatch):
         real_read_text = Path.read_text

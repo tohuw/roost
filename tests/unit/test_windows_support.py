@@ -1,7 +1,7 @@
 """Hermetic tests for the Windows path, shortcut, and tray-process helpers.
 
 Only two Roost shortcuts exist now (login startup and Start Menu) because
-there are no apps to launch — the ravens start themselves. What is left worth
+there are no apps to launch — the birds start themselves. What is left worth
 pinning is that the PATH and environment plumbing normalises correctly, that the
 tray's liveness check probes rather than trusts a port file, and that stopping the
 tray never signals an unverified PID.
@@ -93,7 +93,7 @@ class TestShortcuts:
         ).exists()
 
     def test_an_ico_tray_icon_is_used_directly(self, monkeypatch, tmp_path):
-        icon = tmp_path / "raven.ico"
+        icon = tmp_path / "bird.ico"
         icon.write_bytes(b"ico")
         monkeypatch.setattr(
             windows_support, "prepare_tray_icon", windows_support.prepare_tray_icon
@@ -101,18 +101,18 @@ class TestShortcuts:
         from roost import icons
 
         monkeypatch.setattr(icons, "resolve", lambda: icons.IconChoice(
-            "raven", icon, template=False
+            "bird", icon, template=False
         ))
         assert windows_support.prepare_tray_icon() == icon
 
     def test_an_unconvertible_icon_does_not_block_installation(self, monkeypatch, tmp_path):
         """A default-looking shortcut icon beats a tray that never starts."""
-        source = tmp_path / "raven.png"
+        source = tmp_path / "bird.png"
         source.write_bytes(b"not really a png")
         from roost import icons
 
         monkeypatch.setattr(icons, "resolve", lambda: icons.IconChoice(
-            "raven", source, template=False
+            "bird", source, template=False
         ))
         assert windows_support.prepare_tray_icon() is None
 
@@ -160,18 +160,18 @@ class TestEnvironment:
         assert windows_support.os.environ["ROOST_TEST_SETTING"] == "updated"
 
     def test_refresh_picks_up_a_relocated_descriptor_directory(self, monkeypatch):
-        """RAVENS_STATE_DIR set after startup must reach the running tray, or it
-        watches a different directory than the raven publishes to."""
+        """BIRDS_STATE_DIR set after startup must reach the running tray, or it
+        watches a different directory than the bird publishes to."""
         monkeypatch.setattr(windows_support, "is_windows", lambda: True)
         monkeypatch.setattr(windows_support, "_read_registry_path", lambda: "")
-        monkeypatch.delenv("RAVENS_STATE_DIR", raising=False)
+        monkeypatch.delenv("BIRDS_STATE_DIR", raising=False)
         windows_support._managed_environment.clear()
         monkeypatch.setattr(windows_support, "_read_registry_environment",
-                            lambda: {"RAVENS_STATE_DIR": r"D:\ravens"})
+                            lambda: {"BIRDS_STATE_DIR": r"D:\birds"})
 
         windows_support.refresh_user_environment()
 
-        assert windows_support.os.environ["RAVENS_STATE_DIR"] == r"D:\ravens"
+        assert windows_support.os.environ["BIRDS_STATE_DIR"] == r"D:\birds"
 
     def test_refresh_replaces_path_with_the_registry_path(self, monkeypatch):
         monkeypatch.setattr(windows_support, "is_windows", lambda: True)

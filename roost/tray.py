@@ -12,10 +12,10 @@ into its own widgets. A change to the menu's content is a change to this file an
 lands on both platforms at once; a change to how a row looks on one platform
 cannot silently change what the other platform shows.
 
-Nothing here interprets a raven's data. Labels come from the raven, already
+Nothing here interprets a bird's data. Labels come from the bird, already
 sanitised by :mod:`menu_spec`; ids are opaque strings this module only carries
 back to :func:`host.activate`. The host contributes the ordering (which comes
-from the ravens' own declared priority), the wording of its own rows, and
+from the birds' own declared priority), the wording of its own rows, and
 nothing else.
 """
 
@@ -33,13 +33,13 @@ from roost import sanitize
 class RowKind(Enum):
     """What a row is for. A tray switches on this and nothing else."""
 
-    #: A raven's name, introducing its rows. Never clickable.
-    RAVEN = "raven"
-    #: Why a raven cannot be used. Never clickable, always visible.
+    #: A bird's name, introducing its rows. Never clickable.
+    BIRD = "bird"
+    #: Why a bird cannot be used. Never clickable, always visible.
     REASON = "reason"
-    #: A section title inside a raven's contribution. Never clickable.
+    #: A section title inside a bird's contribution. Never clickable.
     SECTION = "section"
-    #: A row the raven published. Clickable when the raven said so.
+    #: A row the bird published. Clickable when the bird said so.
     ITEM = "item"
     #: A visual divider.
     SEPARATOR = "separator"
@@ -47,8 +47,8 @@ class RowKind(Enum):
     HOST = "host"
 
 
-#: Markers prefixed to an item's label for each style a raven may request. The
-#: raven names an intent; the host chooses the presentation. A raven cannot
+#: Markers prefixed to an item's label for each style a bird may request. The
+#: bird names an intent; the host chooses the presentation. A bird cannot
 #: supply a marker of its own, because that would be styling by another name.
 STYLE_MARKERS = {
     "attention": "● ",
@@ -56,10 +56,10 @@ STYLE_MARKERS = {
     "normal": "",
 }
 
-#: Shown in place of a raven's rows when no raven has published a descriptor at
-#: all. Distinct from a raven that is present but unreachable: that one gets its
+#: Shown in place of a bird's rows when no bird has published a descriptor at
+#: all. Distinct from a bird that is present but unreachable: that one gets its
 #: own name and its own reason.
-NO_RAVENS_LABEL = "No ravens are running"
+NO_BIRDS_LABEL = "No birds are running"
 
 HELP_LABEL = "Help"
 START_LABEL = "Start"
@@ -75,8 +75,8 @@ class Row:
     #: Set on :attr:`RowKind.HOST` rows so a tray can bind the right callback
     #: without matching on display text.
     action: str = ""
-    #: The raven this row belongs to, for :attr:`RowKind.ITEM` rows.
-    raven: str = ""
+    #: The bird this row belongs to, for :attr:`RowKind.ITEM` rows.
+    bird: str = ""
     #: The published item, for :attr:`RowKind.ITEM` rows.
     item: "menu_spec.MenuItem | None" = None
     enabled: bool = False
@@ -101,29 +101,29 @@ def item_label(item: "menu_spec.MenuItem") -> str:
     return f"{marker}{item.label}"
 
 
-def raven_label(menu: "menu_spec.RavenMenu") -> str:
-    """Return the header text for one raven, including its badge count.
+def bird_label(menu: "menu_spec.BirdMenu") -> str:
+    """Return the header text for one bird, including its badge count.
 
-    The badge is the raven's own number — how many things it says want
+    The badge is the bird's own number — how many things it says want
     attention. Roost does not compute it and does not know what it counts.
     """
-    display = menu.display or menu.name or "Unknown raven"
+    display = menu.display or menu.name or "Unknown bird"
     if menu.available and menu.spec.badge:
         return f"{display} ({menu.spec.badge})"
     return display
 
 
-def raven_rows(menu: "menu_spec.RavenMenu") -> list[Row]:
-    """Return the rows for one raven: its name, then its content or its reason."""
-    rows = [Row(RowKind.RAVEN, label=raven_label(menu))]
+def bird_rows(menu: "menu_spec.BirdMenu") -> list[Row]:
+    """Return the rows for one bird: its name, then its content or its reason."""
+    rows = [Row(RowKind.BIRD, label=bird_label(menu))]
 
     if not menu.available:
-        # An unreachable, stale, or malformed raven renders as a disabled row
+        # An unreachable, stale, or malformed bird renders as a disabled row
         # with a visible reason. Omitting it would be worse than showing it
-        # broken: a raven that vanishes from the menu looks like one that was
+        # broken: a bird that vanishes from the menu looks like one that was
         # never installed, and the user has nothing to act on.
         rows.append(Row(RowKind.REASON, label=menu.reason))
-        # ...and a reason on its own was still a dead end. A raven that says
+        # ...and a reason on its own was still a dead end. A bird that says
         # how to start it gets a row that does, because "its process is gone"
         # with nothing to click is the state a status menu is least useful in.
         if menu.launch is not None and launcher.supported_here(menu.launch):
@@ -148,7 +148,7 @@ def raven_rows(menu: "menu_spec.RavenMenu") -> list[Row]:
                 Row(
                     RowKind.ITEM,
                     label=item_label(item),
-                    raven=menu.name,
+                    bird=menu.name,
                     item=item,
                     enabled=item.clickable,
                 )
@@ -159,8 +159,8 @@ def raven_rows(menu: "menu_spec.RavenMenu") -> list[Row]:
 def build_rows(model: "host.MenuModel") -> list[Row]:
     """Return every row of the whole menu, in the order it should be drawn.
 
-    The ravens come first, in the order the model already holds — which is the
-    order the ravens' own ``host_priority`` produced. Roost's own rows follow.
+    The birds come first, in the order the model already holds — which is the
+    order the birds' own ``host_priority`` produced. Roost's own rows follow.
     """
     rows: list[Row] = []
 
@@ -168,9 +168,9 @@ def build_rows(model: "host.MenuModel") -> list[Row]:
         for index, menu in enumerate(model.menus):
             if index:
                 rows.append(Row(RowKind.SEPARATOR))
-            rows.extend(raven_rows(menu))
+            rows.extend(bird_rows(menu))
     else:
-        rows.append(Row(RowKind.REASON, label=NO_RAVENS_LABEL))
+        rows.append(Row(RowKind.REASON, label=NO_BIRDS_LABEL))
 
     rows.append(Row(RowKind.SEPARATOR))
     rows.append(Row(RowKind.HOST, label=HELP_LABEL, action="help", enabled=True))
@@ -187,7 +187,7 @@ def signature(rows: list[Row]) -> tuple:
     the model instead would let a change reach the model but never the menu.
     """
     return tuple(
-        (row.kind.value, row.label, row.action, row.raven, row.enabled,
+        (row.kind.value, row.label, row.action, row.bird, row.enabled,
          row.checked,
          tuple((child.label, child.action, child.checked) for child in row.children))
         for row in rows

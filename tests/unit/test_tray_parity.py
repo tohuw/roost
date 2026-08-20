@@ -90,7 +90,7 @@ from roost import host
 from roost import icons
 from roost import menu_spec
 from roost import menubar
-from roost import ravens
+from roost import birds
 from roost import tray
 from roost import windows_tray
 from roost.tray import RowKind
@@ -102,7 +102,7 @@ def isolated_state(monkeypatch, tmp_path):
 
 
 def _descriptor(name):
-    return ravens.RavenDescriptor(
+    return birds.BirdDescriptor(
         name=name, display=name.title(), api_version=1, min_api=1, max_api=1,
         pid=1, port=47100, token_path=None, token_header="", endpoints={},
         host_priority=0, started=None, path=Path(f"/tmp/{name}.json"),
@@ -115,7 +115,7 @@ def _live(name, *labels, badge=0, style="normal", detail=""):
                            detail=detail)
         for label in labels
     )
-    return menu_spec.RavenMenu(
+    return menu_spec.BirdMenu(
         name=name, display=name.title(),
         spec=menu_spec.MenuSpec(badge=badge, sections=(
             menu_spec.MenuSection(id="s", title="Sessions", items=items),
@@ -167,24 +167,24 @@ def _windows_separators(menu):
 
 
 MODELS = {
-    "no ravens": host.MenuModel(),
-    "one live raven": host.MenuModel((_live("huginn", "Approve"),)),
-    "two live ravens": host.MenuModel((_live("huginn", "A"), _live("muninn", "B"))),
+    "no birds": host.MenuModel(),
+    "one live bird": host.MenuModel((_live("huginn", "Approve"),)),
+    "two live birds": host.MenuModel((_live("huginn", "A"), _live("muninn", "B"))),
     "one unavailable": host.MenuModel((
-        menu_spec.RavenMenu(name="muninn", display="Muninn", reason="Not running."),
+        menu_spec.BirdMenu(name="muninn", display="Muninn", reason="Not running."),
     )),
     "mixed": host.MenuModel((
         _live("huginn", "Approve", badge=3),
-        menu_spec.RavenMenu(name="muninn", display="Muninn", reason="Gone."),
+        menu_spec.BirdMenu(name="muninn", display="Muninn", reason="Gone."),
     )),
     "styled and detailed": host.MenuModel((
         _live("huginn", "Approve", style="attention", detail="claude"),
     )),
     "up but silent": host.MenuModel((
-        menu_spec.RavenMenu(name="huginn", display="Huginn",
+        menu_spec.BirdMenu(name="huginn", display="Huginn",
                             descriptor=_descriptor("huginn")),
     )),
-    "an unknown raven": host.MenuModel((_live("corvid-nine", "Row"),)),
+    "an unknown bird": host.MenuModel((_live("corvid-nine", "Row"),)),
 }
 
 

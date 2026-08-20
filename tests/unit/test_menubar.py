@@ -64,7 +64,7 @@ from roost import host
 from roost import icons
 from roost import menu_spec
 from roost import menubar
-from roost import ravens
+from roost import birds
 from roost import tray
 from roost.tray import RowKind
 
@@ -76,7 +76,7 @@ def isolated_state(monkeypatch, tmp_path):
 
 
 def _descriptor(name="huginn", port=47100):
-    return ravens.RavenDescriptor(
+    return birds.BirdDescriptor(
         name=name, display=name.title(), api_version=1, min_api=1, max_api=1,
         pid=1, port=port, token_path=None, token_header="", endpoints={},
         host_priority=0, started=None, path=Path(f"/tmp/{name}.json"),
@@ -87,7 +87,7 @@ def _live_menu(name="huginn", *labels, badge=0):
     items = tuple(
         menu_spec.MenuItem(label=label, action_id=f"act:{label}") for label in labels
     )
-    return menu_spec.RavenMenu(
+    return menu_spec.BirdMenu(
         name=name, display=name.title(),
         spec=menu_spec.MenuSpec(badge=badge, sections=(
             menu_spec.MenuSection(id="s", title="Sessions", items=items),
@@ -116,7 +116,7 @@ class TestRendering:
         assert _app()._render(tray.Row(RowKind.SEPARATOR)) is None
 
     def test_an_enabled_item_is_clickable(self):
-        row = tray.Row(RowKind.ITEM, label="Approve", raven="huginn",
+        row = tray.Row(RowKind.ITEM, label="Approve", bird="huginn",
                        item=menu_spec.MenuItem(label="Approve", action_id="a"),
                        enabled=True)
         assert _app()._render(row).callback is not None
@@ -127,12 +127,12 @@ class TestRendering:
                        item=menu_spec.MenuItem(label="Approve"))
         assert _app()._render(row).callback is None
 
-    @pytest.mark.parametrize("kind", [RowKind.RAVEN, RowKind.REASON, RowKind.SECTION])
+    @pytest.mark.parametrize("kind", [RowKind.BIRD, RowKind.REASON, RowKind.SECTION])
     def test_structural_rows_are_inert(self, kind):
         assert _app()._render(tray.Row(kind, label="Text")).callback is None
 
     def test_a_reason_row_is_still_rendered(self):
-        """It must be visible: an omitted raven looks like an absent one."""
+        """It must be visible: an omitted bird looks like an absent one."""
         item = _app()._render(tray.Row(RowKind.REASON, label="Is not answering."))
         assert item.title == "Is not answering."
 
@@ -143,13 +143,13 @@ class TestRendering:
     def test_a_submenu_row_renders_its_children(self):
         row = tray.Row(RowKind.HOST, label="Tray icon", action="icon", enabled=True,
                        children=(
-                           tray.Row(RowKind.HOST, label="Raven", action="icon:raven",
+                           tray.Row(RowKind.HOST, label="Bird", action="icon:bird",
                                     enabled=True, checked=True),
                            tray.Row(RowKind.HOST, label="Roost",
                                     action="icon:roost", enabled=True),
                        ))
         item = _app()._render(row)
-        assert [child.title for child in item.children] == ["Raven", "Roost"]
+        assert [child.title for child in item.children] == ["Bird", "Roost"]
         assert [child.state for child in item.children] == [1, 0]
 
     def test_the_whole_menu_is_built_from_the_shared_rows(self, monkeypatch):
@@ -176,7 +176,7 @@ class TestRendering:
 # ── Activation ────────────────────────────────────────────────────────────────
 
 class TestActivation:
-    def test_a_click_is_forwarded_to_the_publishing_raven(self, monkeypatch):
+    def test_a_click_is_forwarded_to_the_publishing_bird(self, monkeypatch):
         model = host.MenuModel((_live_menu("huginn", "Approve"),))
         monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
         seen = []
@@ -185,7 +185,7 @@ class TestActivation:
             lambda menu, item: seen.append((menu.name, item.action_id)) or None,
         )
         app = _app(model)
-        row = tray.Row(RowKind.ITEM, label="Approve", raven="huginn", enabled=True,
+        row = tray.Row(RowKind.ITEM, label="Approve", bird="huginn", enabled=True,
                        item=model.menus[0].spec.sections[0].items[0])
         app._make_activate(row)(None)
         assert seen == [("huginn", "act:Approve")]
@@ -197,19 +197,19 @@ class TestActivation:
         opened = []
         monkeypatch.setattr(menubar.webbrowser, "open", opened.append)
         app = _app(model)
-        row = tray.Row(RowKind.ITEM, label="Console", raven="huginn", enabled=True,
+        row = tray.Row(RowKind.ITEM, label="Console", bird="huginn", enabled=True,
                        item=model.menus[0].spec.sections[0].items[0])
         app._make_activate(row)(None)
         assert opened == ["http://127.0.0.1:47100/"]
 
-    def test_a_click_on_a_raven_that_has_since_vanished_does_nothing(self, monkeypatch):
+    def test_a_click_on_a_bird_that_has_since_vanished_does_nothing(self, monkeypatch):
         monkeypatch.setattr(host, "build_model", lambda *_a, **_k: host.MenuModel())
         monkeypatch.setattr(
             host, "activate",
-            lambda *_a: pytest.fail("activate must not run for a missing raven"),
+            lambda *_a: pytest.fail("activate must not run for a missing bird"),
         )
         app = _app(host.MenuModel())
-        row = tray.Row(RowKind.ITEM, label="Gone", raven="huginn", enabled=True,
+        row = tray.Row(RowKind.ITEM, label="Gone", bird="huginn", enabled=True,
                        item=menu_spec.MenuItem(label="Gone", action_id="a"))
         app._make_activate(row)(None)
 
@@ -232,8 +232,8 @@ class TestActivation:
         _app()._quit()
         assert events == ["help", "lock", "quit"]
 
-    def test_quit_stops_no_raven(self):
-        """The ravens are daemons the tray does not own, so it never stops them."""
+    def test_quit_stops_no_bird(self):
+        """The birds are daemons the tray does not own, so it never stops them."""
         source = Path(menubar.__file__).read_text(encoding="utf-8")
         for forbidden in ("Popen", "os.kill", "SIGTERM", "SIGKILL", "execve"):
             assert forbidden not in source, forbidden
@@ -246,7 +246,7 @@ class TestNoLauncherRemains:
         """None of Appistry's app-launching machinery came along.
 
         Matched on whole module names, not substrings: `roost.launcher` asks a
-        supervisor to start a *raven* by identifier, which is a different thing
+        supervisor to start a *bird* by identifier, which is a different thing
         from Appistry's `launch` module that ran arbitrary apps -- and a
         substring check called the legitimate one a violation.
         """
@@ -262,7 +262,7 @@ class TestNoLauncherRemains:
         for forbidden in ("process", "registry", "launch", "cleanup"):
             assert forbidden not in imported, forbidden
 
-    def test_no_raven_id_is_special_cased(self):
+    def test_no_bird_id_is_special_cased(self):
         source = Path(menubar.__file__).read_text(encoding="utf-8")
         for name in ("huginn", "muninn", "Huginn", "Muninn"):
             assert name not in source, name
@@ -357,9 +357,9 @@ class TestIconKwargs:
         # Compared against str(chosen) rather than a literal: what matters is
         # that the resolved path arrives intact, and a Path renders with the
         # host OS's separator.
-        chosen = Path("/tmp/raven-template.png")
+        chosen = Path("/tmp/bird-template.png")
         monkeypatch.setattr(menubar.icons, "resolve", lambda: icons.IconChoice(
-            "raven", chosen, template=True
+            "bird", chosen, template=True
         ))
         kwargs = menubar._icon_kwargs()
         assert kwargs["template"] is True
@@ -369,4 +369,4 @@ class TestIconKwargs:
     def test_no_resolvable_icon_falls_back_to_a_title(self, monkeypatch):
         """A tray with no icon at all is unclickable; a text title is not."""
         monkeypatch.setattr(menubar.icons, "resolve", lambda: None)
-        assert menubar._icon_kwargs() == {"title": "Ravens"}
+        assert menubar._icon_kwargs() == {"title": "Birds"}

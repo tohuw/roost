@@ -1,9 +1,9 @@
 """Tests for the CLI.
 
-The CLI is small on purpose: the ravens start themselves, so there is nothing to
+The CLI is small on purpose: the birds start themselves, so there is nothing to
 register, start, stop, or open. What is worth pinning is that the launcher verbs
 are really gone (a stale one would imply a launcher that no longer exists), that
-``ravens`` reports the unavailable ones with their reasons, and that descriptor
+``birds`` reports the unavailable ones with their reasons, and that descriptor
 text — untrusted input — cannot write control characters into a terminal.
 """
 
@@ -18,13 +18,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from roost import cli
 from roost import paths
-from roost import ravens
+from roost import birds
 
 
 @pytest.fixture(autouse=True)
 def isolated_state(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "STATE_DIR", tmp_path / "roost")
-    monkeypatch.setenv("RAVENS_STATE_DIR", str(tmp_path / "ravens"))
+    monkeypatch.setenv("BIRDS_STATE_DIR", str(tmp_path / "birds"))
     return tmp_path
 
 
@@ -81,35 +81,35 @@ class TestNoLauncherVerbs:
                           "import cleanup", "import hooks"):
             assert forbidden not in source, forbidden
 
-    def test_the_cli_spawns_no_raven(self):
+    def test_the_cli_spawns_no_bird(self):
         source = Path(cli.__file__).read_text(encoding="utf-8")
         for forbidden in ("os.execve", "os.kill", "SIGTERM"):
             assert forbidden not in source, forbidden
 
     def test_the_remaining_verbs_are_the_documented_ones(self):
         assert set(cli.COMMANDS) == {
-            "install", "uninstall", "ui", "ravens"
+            "install", "uninstall", "ui", "birds"
         }
 
 
-# ── ravens ────────────────────────────────────────────────────────────────────
+# ── birds ────────────────────────────────────────────────────────────────────
 
-class TestCmdRavens:
+class TestCmdBirds:
     def _run(self):
-        return cli.cmd_ravens(argparse.Namespace())
+        return cli.cmd_birds(argparse.Namespace())
 
     def test_a_missing_directory_is_reported_not_an_error(self, capsys):
         assert self._run() == 0
         assert "does not exist yet" in capsys.readouterr().out
 
     def test_an_empty_directory_is_reported(self, tmp_path, capsys):
-        (tmp_path / "ravens").mkdir(parents=True)
+        (tmp_path / "birds").mkdir(parents=True)
         assert self._run() == 0
         assert "empty" in capsys.readouterr().out
 
-    def test_a_live_raven_is_listed_with_its_details(self, tmp_path, monkeypatch, capsys):
-        _write_descriptor(tmp_path / "ravens", "huginn", port=47123, host_priority=100)
-        monkeypatch.setattr(ravens, "pid_is_alive", lambda *_a, **_k: True)
+    def test_a_live_bird_is_listed_with_its_details(self, tmp_path, monkeypatch, capsys):
+        _write_descriptor(tmp_path / "birds", "huginn", port=47123, host_priority=100)
+        monkeypatch.setattr(birds, "pid_is_alive", lambda *_a, **_k: True)
 
         assert self._run() == 0
         out = capsys.readouterr().out
@@ -117,12 +117,12 @@ class TestCmdRavens:
         assert "47123" in out
         assert "100" in out
 
-    def test_an_unavailable_raven_is_listed_with_its_reason(
+    def test_an_unavailable_bird_is_listed_with_its_reason(
         self, tmp_path, monkeypatch, capsys
     ):
         """Omitting it would be indistinguishable from never having installed it."""
-        _write_descriptor(tmp_path / "ravens", "muninn")
-        monkeypatch.setattr(ravens, "pid_is_alive", lambda *_a, **_k: False)
+        _write_descriptor(tmp_path / "birds", "muninn")
+        monkeypatch.setattr(birds, "pid_is_alive", lambda *_a, **_k: False)
 
         assert self._run() == 0
         out = capsys.readouterr().out
@@ -130,7 +130,7 @@ class TestCmdRavens:
         assert "Not running" in out
 
     def test_a_malformed_descriptor_is_reported_not_raised(self, tmp_path, capsys):
-        directory = tmp_path / "ravens"
+        directory = tmp_path / "birds"
         directory.mkdir(parents=True)
         (directory / "huginn.json").write_text("}{ not json", encoding="utf-8")
 
@@ -142,8 +142,8 @@ class TestCmdRavens:
     ):
         secret = tmp_path / "token"
         secret.write_text("super-secret-value", encoding="utf-8")
-        _write_descriptor(tmp_path / "ravens", "huginn", token_path=str(secret))
-        monkeypatch.setattr(ravens, "pid_is_alive", lambda *_a, **_k: True)
+        _write_descriptor(tmp_path / "birds", "huginn", token_path=str(secret))
+        monkeypatch.setattr(birds, "pid_is_alive", lambda *_a, **_k: True)
 
         assert self._run() == 0
         out = capsys.readouterr().out
@@ -155,7 +155,7 @@ class TestCmdRavens:
         self, tmp_path, capsys
     ):
         """A descriptor is untrusted input; an ANSI escape rewrites the terminal."""
-        directory = tmp_path / "ravens"
+        directory = tmp_path / "birds"
         directory.mkdir(parents=True)
         (directory / "huginn.json").write_text(
             json.dumps({"api_version": 1, "name": "huginn",
@@ -170,7 +170,7 @@ class TestCmdRavens:
 
     def test_the_descriptor_directory_is_printed(self, tmp_path, capsys):
         self._run()
-        assert str(tmp_path / "ravens") in capsys.readouterr().out
+        assert str(tmp_path / "birds") in capsys.readouterr().out
 
 
 # ── icon ──────────────────────────────────────────────────────────────────────
@@ -267,8 +267,8 @@ class TestCmdUi:
 # ── uninstall ─────────────────────────────────────────────────────────────────
 
 class TestCmdUninstall:
-    def test_uninstall_stops_no_raven(self, monkeypatch, capsys):
-        """The ravens outlive Roost; uninstalling the tray must not touch them."""
+    def test_uninstall_stops_no_bird(self, monkeypatch, capsys):
+        """The birds outlive Roost; uninstalling the tray must not touch them."""
         monkeypatch.setattr(cli.windows_support, "is_windows", lambda: False)
 
         class Result:

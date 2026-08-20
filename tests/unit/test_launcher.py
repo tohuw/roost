@@ -1,6 +1,6 @@
-"""Asking the OS to start a stopped raven.
+"""Asking the OS to start a stopped bird.
 
-The menu used to show a stopped raven greyed out with "its recorded process is
+The menu used to show a stopped bird greyed out with "its recorded process is
 gone" and nothing to click. The reason given for that was that a stopped daemon
 withdraws its descriptor so the host cannot see it — true only of a *clean*
 shutdown. A kill, a crash or a power cut leaves the descriptor exactly where it
@@ -18,13 +18,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from roost import host, launcher, menu_spec, ravens, tray
+from roost import host, launcher, menu_spec, birds, tray
 from roost.tray import RowKind
 
 
 class TestParsing:
     def test_absent_is_not_an_error(self):
-        """launch is optional; a raven predating it must keep working."""
+        """launch is optional; a bird predating it must keep working."""
         assert launcher.parse(None) is None
 
     @pytest.mark.parametrize("kind", launcher.KINDS)
@@ -126,14 +126,14 @@ class TestPlatformFit:
 
 class TestTheRow:
     def _stopped(self, launch):
-        return menu_spec.unavailable(ravens.UnavailableRaven(
+        return menu_spec.unavailable(birds.UnavailableBird(
             "muninn", "Muninn", "Not running (its recorded process is gone).",
             None, launch=launch,
         ))
 
-    def test_a_stopped_raven_that_says_how_gets_a_start_row(self, monkeypatch):
+    def test_a_stopped_bird_that_says_how_gets_a_start_row(self, monkeypatch):
         monkeypatch.setattr(launcher, "supported_here", lambda _spec: True)
-        rows = tray.raven_rows(self._stopped(launcher.LaunchSpec("systemd", "muninn.service")))
+        rows = tray.bird_rows(self._stopped(launcher.LaunchSpec("systemd", "muninn.service")))
         start = [r for r in rows if r.action == "start:muninn"]
         assert len(start) == 1
         assert start[0].enabled is True
@@ -146,17 +146,17 @@ class TestTheRow:
 
     def _rows_with_start(self):
         with patch.object(launcher, "supported_here", lambda _spec: True):
-            return tray.raven_rows(
+            return tray.bird_rows(
                 self._stopped(launcher.LaunchSpec("systemd", "muninn.service")))
 
-    def test_a_raven_that_says_nothing_gets_no_row(self):
+    def test_a_bird_that_says_nothing_gets_no_row(self):
         """Absent launch is the old behaviour, unchanged."""
-        rows = tray.raven_rows(self._stopped(None))
+        rows = tray.bird_rows(self._stopped(None))
         assert not [r for r in rows if str(r.action).startswith("start:")]
 
     def test_no_row_when_this_machine_cannot_honour_it(self, monkeypatch):
         monkeypatch.setattr(launcher, "supported_here", lambda _spec: False)
-        rows = tray.raven_rows(self._stopped(launcher.LaunchSpec("launchd", "is.tohuw.muninn")))
+        rows = tray.bird_rows(self._stopped(launcher.LaunchSpec("launchd", "is.tohuw.muninn")))
         assert not [r for r in rows if str(r.action).startswith("start:")]
 
     def test_becoming_startable_changes_the_signature(self):
@@ -171,7 +171,7 @@ class TestModelLookup:
         """Re-reading disk between draw and click acts on what was never shown."""
         spec = launcher.LaunchSpec("systemd", "muninn.service")
         model = host.MenuModel((
-            menu_spec.RavenMenu(name="muninn", display="Muninn",
+            menu_spec.BirdMenu(name="muninn", display="Muninn",
                                 reason="gone", launch=spec),
         ))
         assert model.launch_spec("muninn") is spec

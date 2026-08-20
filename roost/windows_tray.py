@@ -32,7 +32,7 @@ from roost.tray import RowKind
 HERE = Path(__file__).resolve().parent
 log = logging.getLogger(__name__)
 
-#: Matches the macOS tray's refresh rate so a raven's status goes stale at the
+#: Matches the macOS tray's refresh rate so a bird's status goes stale at the
 #: same speed on both platforms.
 POLL_SECONDS = 5
 
@@ -74,7 +74,7 @@ class RoostWindowsTray:
             # Windows tray under that name, and both can be running.
             #
             # The third argument is the hover tooltip, and it names *this app*,
-            # not what the menu happens to contain. "Ravens" read as the name of
+            # not what the menu happens to contain. "Birds" read as the name of
             # some other program to anyone hovering over it -- the same identity
             # confusion the Taskbar entry had when it said "Python".
             "roost", _tray_image(), TOOLTIP, menu=self._build_menu()
@@ -118,7 +118,7 @@ class RoostWindowsTray:
         if row.kind is RowKind.HOST:
             return MenuItem(row.label, self._callback(self._host_action, row.action))
 
-        # A raven name, a section title, a reason, or an item the raven marked
+        # A bird name, a section title, a reason, or an item the bird marked
         # unavailable: shown, never clickable.
         return MenuItem(row.label, None, enabled=False)
 
@@ -144,7 +144,7 @@ class RoostWindowsTray:
     # ── Actions ──────────────────────────────────────────────────────────────
 
     def _activate(self, row: tray.Row) -> None:
-        menu = self._model.find(row.raven)
+        menu = self._model.find(row.bird)
         if menu is None or row.item is None:
             return
         url = host.activate(menu, row.item)
@@ -158,13 +158,13 @@ class RoostWindowsTray:
         elif action == "quit":
             self._shutdown()
         elif action.startswith("start:"):
-            self._start_raven(action[len("start:"):])
+            self._start_bird(action[len("start:"):])
 
-    def _start_raven(self, name: str) -> None:
-        """Ask the supervisor to start a stopped raven, then refresh.
+    def _start_bird(self, name: str) -> None:
+        """Ask the supervisor to start a stopped bird, then refresh.
 
         The refresh is unconditional: the supervisor accepting the request is
-        not the same as the raven being up. Its descriptor is what proves that,
+        not the same as the bird being up. Its descriptor is what proves that,
         and the next poll reads it.
         """
         spec = self._model.launch_spec(name)

@@ -2,8 +2,8 @@
 
 Two things are pinned here. First, exactly one process hosts: the lock is
 exclusive, it survives nothing, and it is released by the kernel when the holder
-dies. Second, aggregation is total — a broken, hostile, or hanging raven produces
-a disabled section with a visible reason and never prevents another raven's
+dies. Second, aggregation is total — a broken, hostile, or hanging bird produces
+a disabled section with a visible reason and never prevents another bird's
 section from rendering.
 """
 
@@ -23,8 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from roost import host
 from roost import menu_spec
-from roost import raven_client
-from roost import ravens
+from roost import bird_client
+from roost import birds
 from roost import sanitize
 
 _POLL_INTERVAL = 0.01
@@ -39,8 +39,8 @@ class _Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
 
 
-class _MenuRaven:
-    """A raven that serves one menu payload on loopback."""
+class _MenuBird:
+    """A bird that serves one menu payload on loopback."""
 
     def __init__(self, payload, *, status=200, delay=0.0):
         holder = self
@@ -82,7 +82,7 @@ class _MenuRaven:
 
 def _write_descriptor(directory: Path, name: str, port: int, **overrides) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
-    document = ravens.DescriptorDocument(
+    document = birds.DescriptorDocument(
         name=name, display=name.capitalize(), port=port, **overrides
     )
     path = directory / f"{name}.json"
@@ -170,7 +170,7 @@ class TestHostLock:
         """A stale recorded pid must not be reported as a live host."""
         path = tmp_path / host.HOST_LOCK_NAME
         path.write_text("999999", encoding="utf-8")
-        monkeypatch.setattr(ravens, "pid_is_alive", lambda *_a, **_k: False)
+        monkeypatch.setattr(birds, "pid_is_alive", lambda *_a, **_k: False)
         assert host.holder_pid(path) is None
 
     @pytest.mark.parametrize("content", ["", "not-a-pid", "-1", "0"])
@@ -320,8 +320,8 @@ class TestHostLockOnAnUnwritablePath:
 # ── Aggregation ───────────────────────────────────────────────────────────────
 
 class TestBuildMenu:
-    def test_a_live_raven_contributes_its_sections(self, tmp_path):
-        server = _MenuRaven(_menu("Huginn", "Approve: deploy", badge=2))
+    def test_a_live_bird_contributes_its_sections(self, tmp_path):
+        server = _MenuBird(_menu("Huginn", "Approve: deploy", badge=2))
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             model = host.build_model(tmp_path)
@@ -334,8 +334,8 @@ class TestBuildMenu:
         finally:
             server.close()
 
-    def test_an_unreachable_raven_is_disabled_with_a_reason(self, tmp_path):
-        server = _MenuRaven(_menu("Huginn"))
+    def test_an_unreachable_bird_is_disabled_with_a_reason(self, tmp_path):
+        server = _MenuBird(_menu("Huginn"))
         port = server.port
         server.close()
         _write_descriptor(tmp_path, "huginn", port)
@@ -345,8 +345,8 @@ class TestBuildMenu:
         assert menu.reason
         assert menu.display == "Huginn"
 
-    def test_a_hanging_raven_does_not_hang_the_model(self, tmp_path):
-        server = _MenuRaven(_menu("Huginn"), delay=5.0)
+    def test_a_hanging_bird_does_not_hang_the_model(self, tmp_path):
+        server = _MenuBird(_menu("Huginn"), delay=5.0)
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             started = time.monotonic()
@@ -358,7 +358,7 @@ class TestBuildMenu:
 
     def test_a_stale_descriptor_is_disabled_with_a_reason(self, tmp_path, monkeypatch):
         _write_descriptor(tmp_path, "huginn", 47100)
-        monkeypatch.setattr(ravens, "pid_is_alive", lambda *_a, **_k: False)
+        monkeypatch.setattr(birds, "pid_is_alive", lambda *_a, **_k: False)
         model = host.build_model(tmp_path)
         assert model.menus[0].available is False
         assert "Not running" in model.menus[0].reason
@@ -370,9 +370,9 @@ class TestBuildMenu:
         assert model.menus[0].available is False
         assert "JSON" in model.menus[0].reason
 
-    def test_one_broken_raven_does_not_hide_a_working_one(self, tmp_path):
+    def test_one_broken_bird_does_not_hide_a_working_one(self, tmp_path):
         """Failure must not be contagious across sections."""
-        server = _MenuRaven(_menu("Huginn", "Row"))
+        server = _MenuBird(_menu("Huginn", "Row"))
         try:
             _write_descriptor(tmp_path, "huginn", server.port, host_priority=100)
             (tmp_path / "muninn.json").write_text("broken", encoding="utf-8")
@@ -384,9 +384,9 @@ class TestBuildMenu:
         finally:
             server.close()
 
-    def test_a_raven_returning_junk_is_up_but_empty(self, tmp_path):
+    def test_a_bird_returning_junk_is_up_but_empty(self, tmp_path):
         """Distinct from unreachable: it answered, it just said nothing usable."""
-        server = _MenuRaven({"sections": "not a list"})
+        server = _MenuBird({"sections": "not a list"})
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             menu = host.build_model(tmp_path).menus[0]
@@ -395,8 +395,8 @@ class TestBuildMenu:
         finally:
             server.close()
 
-    def test_an_erroring_raven_reports_its_status(self, tmp_path):
-        server = _MenuRaven({}, status=500)
+    def test_an_erroring_bird_reports_its_status(self, tmp_path):
+        server = _MenuBird({}, status=500)
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             menu = host.build_model(tmp_path).menus[0]
@@ -407,7 +407,7 @@ class TestBuildMenu:
 
     def test_hostile_labels_never_reach_the_model_unsanitised(self, tmp_path):
         payload = _menu("Hu\x1b[31mginn", "Quit\r\nQuit All", "a‮b")
-        server = _MenuRaven(payload)
+        server = _MenuBird(payload)
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             menu = host.build_model(tmp_path).menus[0]
@@ -428,7 +428,7 @@ class TestBuildMenu:
                 for index in range(40)
             ]
         }
-        server = _MenuRaven(payload)
+        server = _MenuBird(payload)
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             menu = host.build_model(tmp_path).menus[0]
@@ -444,13 +444,13 @@ class TestBuildMenu:
             raise RuntimeError("client bug")
 
         _write_descriptor(tmp_path, "huginn", 47100)
-        monkeypatch.setattr(raven_client, "fetch_menu", _boom)
+        monkeypatch.setattr(bird_client, "fetch_menu", _boom)
         menu = host.build_model(tmp_path).menus[0]
         assert menu.available is False
         assert menu.reason == "Could not be read."
 
     def test_menu_title_can_override_the_descriptor_display(self, tmp_path):
-        server = _MenuRaven(_menu("Huginn (3 active)", "Row"))
+        server = _MenuBird(_menu("Huginn (3 active)", "Row"))
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             assert host.build_model(tmp_path).menus[0].display == "Huginn (3 active)"
@@ -458,7 +458,7 @@ class TestBuildMenu:
             server.close()
 
     def test_descriptor_display_is_used_when_the_menu_has_no_title(self, tmp_path):
-        server = _MenuRaven({"sections": [
+        server = _MenuBird({"sections": [
             {"items": [{"id": "a", "label": "Row"}]}
         ]})
         try:
@@ -478,9 +478,9 @@ class TestMenuModel:
     def test_missing_directory_yields_an_empty_model(self, tmp_path):
         assert host.build_model(tmp_path / "absent").menus == ()
 
-    def test_badge_total_sums_only_available_ravens(self, tmp_path):
-        first = _MenuRaven(_menu("Huginn", "Row", badge=2))
-        second = _MenuRaven(_menu("Muninn", "Row", badge=3))
+    def test_badge_total_sums_only_available_birds(self, tmp_path):
+        first = _MenuBird(_menu("Huginn", "Row", badge=2))
+        second = _MenuBird(_menu("Muninn", "Row", badge=3))
         try:
             _write_descriptor(tmp_path, "huginn", first.port, host_priority=100)
             _write_descriptor(tmp_path, "muninn", second.port)
@@ -490,9 +490,9 @@ class TestMenuModel:
             second.close()
 
     def test_host_priority_orders_the_menu(self, tmp_path):
-        """Order is raven-declared data; Roost knows neither name."""
-        low = _MenuRaven(_menu("Muninn", "Row"))
-        high = _MenuRaven(_menu("Huginn", "Row"))
+        """Order is bird-declared data; Roost knows neither name."""
+        low = _MenuBird(_menu("Muninn", "Row"))
+        high = _MenuBird(_menu("Huginn", "Row"))
         try:
             _write_descriptor(tmp_path, "muninn", low.port, host_priority=10)
             _write_descriptor(tmp_path, "huginn", high.port, host_priority=100)
@@ -504,7 +504,7 @@ class TestMenuModel:
 
     def test_a_companion_alone_renders_the_same_menu(self, tmp_path):
         """Huginn absent: the companion's section simply leads."""
-        server = _MenuRaven(_menu("Muninn", "Row"))
+        server = _MenuBird(_menu("Muninn", "Row"))
         try:
             _write_descriptor(tmp_path, "muninn", server.port, host_priority=10)
             model = host.build_model(tmp_path)
@@ -514,7 +514,7 @@ class TestMenuModel:
             server.close()
 
     def test_find_locates_a_menu_by_name(self, tmp_path):
-        server = _MenuRaven(_menu("Huginn", "Row"))
+        server = _MenuBird(_menu("Huginn", "Row"))
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             model = host.build_model(tmp_path)
@@ -524,7 +524,7 @@ class TestMenuModel:
             server.close()
 
     def test_signature_is_stable_and_hashable(self, tmp_path):
-        server = _MenuRaven(_menu("Huginn", "Row"))
+        server = _MenuBird(_menu("Huginn", "Row"))
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             first = host.build_model(tmp_path).signature()
@@ -534,8 +534,8 @@ class TestMenuModel:
         finally:
             server.close()
 
-    def test_signature_changes_when_a_raven_changes(self, tmp_path):
-        server = _MenuRaven(_menu("Huginn", "Row"))
+    def test_signature_changes_when_a_bird_changes(self, tmp_path):
+        server = _MenuBird(_menu("Huginn", "Row"))
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             before = host.build_model(tmp_path).signature()
@@ -547,7 +547,7 @@ class TestMenuModel:
 
 class TestActivate:
     def test_a_url_item_returns_a_loopback_url(self, tmp_path):
-        server = _MenuRaven({"sections": [
+        server = _MenuBird({"sections": [
             {"items": [{"label": "Open", "url": "/console"}]}
         ]})
         try:
@@ -560,13 +560,13 @@ class TestActivate:
 
     def test_an_action_item_is_forwarded_and_returns_no_url(self, tmp_path, monkeypatch):
         sent = []
-        server = _MenuRaven(_menu("Huginn", "Approve"))
+        server = _MenuBird(_menu("Huginn", "Approve"))
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             menu = host.build_model(tmp_path).menus[0]
             item = menu.spec.sections[0].items[0]
             monkeypatch.setattr(
-                raven_client, "send_action",
+                bird_client, "send_action",
                 lambda descriptor, action_id: sent.append((descriptor.name, action_id)),
             )
             assert host.activate(menu, item) is None
@@ -575,32 +575,32 @@ class TestActivate:
             server.close()
 
     def test_a_refused_action_is_logged_not_raised(self, tmp_path, monkeypatch):
-        server = _MenuRaven(_menu("Huginn", "Approve"))
+        server = _MenuBird(_menu("Huginn", "Approve"))
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             menu = host.build_model(tmp_path).menus[0]
             item = menu.spec.sections[0].items[0]
 
             def _refuse(*_args, **_kwargs):
-                raise raven_client.RavenRequestError("nope")
+                raise bird_client.BirdRequestError("nope")
 
-            monkeypatch.setattr(raven_client, "send_action", _refuse)
+            monkeypatch.setattr(bird_client, "send_action", _refuse)
             assert host.activate(menu, item) is None
         finally:
             server.close()
 
     def test_an_inert_item_does_nothing(self):
-        menu = menu_spec.RavenMenu("huginn", "Huginn")
+        menu = menu_spec.BirdMenu("huginn", "Huginn")
         item = menu_spec.MenuItem(label="Text only", enabled=False)
         assert host.activate(menu, item) is None
 
-    def test_an_unavailable_raven_has_nothing_to_activate(self):
-        menu = menu_spec.RavenMenu("huginn", "Huginn", reason="Not running.")
+    def test_an_unavailable_bird_has_nothing_to_activate(self):
+        menu = menu_spec.BirdMenu("huginn", "Huginn", reason="Not running.")
         item = menu_spec.MenuItem(label="Row", action_id="a")
         assert host.activate(menu, item) is None
 
     def test_a_separator_is_never_activated(self, tmp_path):
-        server = _MenuRaven(_menu("Huginn", "Row"))
+        server = _MenuBird(_menu("Huginn", "Row"))
         try:
             _write_descriptor(tmp_path, "huginn", server.port)
             menu = host.build_model(tmp_path).menus[0]

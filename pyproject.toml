@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 # README.md. The constraint is the other tool's existence, not this repo's old name.
 name = "roost"
 dynamic = ["version"]
-description = "One shared status menu bar for the ravens: Huginn and Muninn"
+description = "One shared status menu bar for every bird on the machine"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

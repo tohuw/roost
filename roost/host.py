@@ -7,8 +7,8 @@ possible. This is the ``flock`` guard the launcher used for its single-instance
 check, ported forward — the mechanism was already precisely the "host election
 via a single lock" the shared-menubar proposal asked for.
 
-Which *raven* leads the menu is a separate question, and it is answered by data
-rather than by code here: a raven declares ``host_priority`` in its descriptor and
+Which *bird* leads the menu is a separate question, and it is answered by data
+rather than by code here: a bird declares ``host_priority`` in its descriptor and
 Roost sorts by it. Huginn declares a higher priority than Muninn and therefore
 leads when both are present; when it is absent, Muninn's section simply sorts
 first and the same menu runs standalone. Roost does not know either name.
@@ -25,10 +25,10 @@ from pathlib import Path
 from roost import launcher
 from roost import menu_spec
 from roost import paths
-from roost import raven_client
-from roost import ravens
+from roost import bird_client
+from roost import birds
 from roost import sanitize
-from roost.menu_spec import RavenMenu
+from roost.menu_spec import BirdMenu
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -215,7 +215,7 @@ def holder_pid(path: Path | None = None) -> int | None:
         pid = int(raw)
     except (OSError, ValueError):
         return None
-    return pid if ravens.pid_is_alive(pid) else None
+    return pid if birds.pid_is_alive(pid) else None
 
 
 # ── Aggregation ───────────────────────────────────────────────────────────────
@@ -228,14 +228,14 @@ class MenuModel:
     it and draws labels; it does not sort, filter, or reinterpret.
     """
 
-    menus: tuple[RavenMenu, ...] = ()
+    menus: tuple[BirdMenu, ...] = ()
 
     @property
     def any_available(self) -> bool:
         return any(menu.available for menu in self.menus)
 
     def launch_spec(self, name: str) -> "launcher.LaunchSpec | None":
-        """The launch spec for a raven by name, if it published one.
+        """The launch spec for a bird by name, if it published one.
 
         Resolved from the model the menu was drawn from, not re-read from disk:
         the row exists because *this* model said it could be started, and
@@ -255,29 +255,29 @@ class MenuModel:
         """A hashable summary used to skip idle rebuilds."""
         return tuple(menu.signature() for menu in self.menus)
 
-    def find(self, name: str) -> RavenMenu | None:
+    def find(self, name: str) -> BirdMenu | None:
         for menu in self.menus:
             if menu.name == name:
                 return menu
         return None
 
 
-def build_menu(raven: "ravens.Raven", *, timeout: float = raven_client.MENU_TIMEOUT) -> RavenMenu:
-    """Fetch and parse one raven's menu, or describe why it could not be.
+def build_menu(bird: "birds.Bird", *, timeout: float = bird_client.MENU_TIMEOUT) -> BirdMenu:
+    """Fetch and parse one bird's menu, or describe why it could not be.
 
-    Never raises. An unreachable, slow, or misbehaving raven produces a
-    :class:`RavenMenu` with a ``reason``, which the renderer draws as a disabled
+    Never raises. An unreachable, slow, or misbehaving bird produces a
+    :class:`BirdMenu` with a ``reason``, which the renderer draws as a disabled
     section — the failure is visible, bounded, and not contagious.
     """
-    if isinstance(raven, ravens.UnavailableRaven):
-        return menu_spec.unavailable(raven)
+    if isinstance(bird, birds.UnavailableBird):
+        return menu_spec.unavailable(bird)
 
-    descriptor = raven.descriptor
+    descriptor = bird.descriptor
     display = sanitize.sanitize_label(descriptor.display) or descriptor.name
     try:
-        payload = raven_client.fetch_menu(descriptor, timeout=timeout)
-    except raven_client.RavenRequestError as exc:
-        return RavenMenu(
+        payload = bird_client.fetch_menu(descriptor, timeout=timeout)
+    except bird_client.BirdRequestError as exc:
+        return BirdMenu(
             name=descriptor.name,
             display=display,
             reason=sanitize.sanitize_label(exc.reason) or "Could not be reached.",
@@ -287,11 +287,11 @@ def build_menu(raven: "ravens.Raven", *, timeout: float = raven_client.MENU_TIME
         # A client bug must not take the whole menu down with it. Log the detail;
         # show the user something honest and generic.
         log.warning(
-            "Unexpected failure fetching the menu for raven %s",
+            "Unexpected failure fetching the menu for bird %s",
             sanitize.safe_for_log(descriptor.name),
             exc_info=True,
         )
-        return RavenMenu(
+        return BirdMenu(
             name=descriptor.name,
             display=display,
             reason="Could not be read.",
@@ -299,9 +299,9 @@ def build_menu(raven: "ravens.Raven", *, timeout: float = raven_client.MENU_TIME
         )
 
     spec = menu_spec.parse_menu(payload)
-    return RavenMenu(
+    return BirdMenu(
         name=descriptor.name,
-        # A raven may retitle its own section through the menu payload; fall
+        # A bird may retitle its own section through the menu payload; fall
         # back to the descriptor's display name when it does not.
         display=spec.title or display,
         spec=spec,
@@ -312,34 +312,34 @@ def build_menu(raven: "ravens.Raven", *, timeout: float = raven_client.MENU_TIME
 def build_model(
     directory: Path | None = None,
     *,
-    timeout: float = raven_client.MENU_TIMEOUT,
+    timeout: float = bird_client.MENU_TIMEOUT,
 ) -> MenuModel:
-    """Discover every raven and build the whole menu model.
+    """Discover every bird and build the whole menu model.
 
-    Order comes from :func:`ravens.discover`, which sorts by the ``host_priority``
-    each raven declares. Roost contributes no opinion about which raven should
+    Order comes from :func:`birds.discover`, which sorts by the ``host_priority``
+    each bird declares. Roost contributes no opinion about which bird should
     lead — hardcoding one would be the same mistake as a hardcoded catalog id.
     """
-    discovered = ravens.discover(directory)
-    return MenuModel(tuple(build_menu(raven, timeout=timeout) for raven in discovered))
+    discovered = birds.discover(directory)
+    return MenuModel(tuple(build_menu(bird, timeout=timeout) for bird in discovered))
 
 
-def activate(menu: RavenMenu, item: menu_spec.MenuItem) -> str | None:
+def activate(menu: BirdMenu, item: menu_spec.MenuItem) -> str | None:
     """Act on a clicked menu item.
 
     Returns a URL for the caller to open, or None when the action was forwarded
-    to the raven. Roost does not interpret ``item.action_id``; it hands it back
-    to the raven that published it, under that raven's own credential.
+    to the bird. Roost does not interpret ``item.action_id``; it hands it back
+    to the bird that published it, under that bird's own credential.
     """
     if menu.descriptor is None or not item.clickable:
         return None
     if item.url:
-        return raven_client.open_url(menu.descriptor, item.url)
+        return bird_client.open_url(menu.descriptor, item.url)
     try:
-        raven_client.send_action(menu.descriptor, item.action_id)
-    except raven_client.RavenRequestError as exc:
+        bird_client.send_action(menu.descriptor, item.action_id)
+    except bird_client.BirdRequestError as exc:
         log.warning(
-            "Raven %s refused action: %s",
+            "Bird %s refused action: %s",
             sanitize.safe_for_log(menu.name),
             sanitize.safe_for_log(exc.reason),
         )

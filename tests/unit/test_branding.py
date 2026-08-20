@@ -41,7 +41,7 @@ class TestTheHoverTooltip:
         assert 'TOOLTIP = "Roost"' in self.SOURCE
 
     def test_the_icon_is_given_the_tooltip_rather_than_a_literal(self):
-        """It said "Ravens" — the menu's contents, which reads as another app.
+        """It said "Birds" — the menu's contents, which reads as another app.
 
         Walks the AST rather than the text: the comment explaining the old
         value names it, and a substring check cannot tell an explanation of
@@ -54,7 +54,7 @@ class TestTheHoverTooltip:
             node.value for node in ast.walk(ast.parse(self.SOURCE))
             if isinstance(node, ast.Constant) and isinstance(node.value, str)
         }
-        assert "Ravens" not in literals
+        assert "Birds" not in literals
 
 
 def _venv(tmp_path: Path, home: Path) -> Path:

@@ -109,7 +109,7 @@ def _free_port() -> int:
 def request_host_is_local(headers) -> bool:
     """Return True if the ``Host`` header names a loopback address.
 
-    Mirrors the check the ravens make themselves. A page served from any other
+    Mirrors the check the birds make themselves. A page served from any other
     hostname carries that hostname in ``Host`` even when it resolves to
     127.0.0.1, so this is what stops DNS rebinding and drive-by requests.
     """
@@ -184,7 +184,7 @@ def render_help_page(nonce: str = "") -> str:
     # help.md holds non-ASCII characters, so the encoding must be explicit:
     # relying on the platform default raises UnicodeDecodeError under a legacy
     # code page and takes the Help page down with it.
-    # "tables" is enabled because help.md uses one to explain the reasons a raven
+    # "tables" is enabled because help.md uses one to explain the reasons a bird
     # can be unavailable — a list of what-you-see/what-it-means pairs reads far
     # worse as prose. The rendered tags are in the allowlist below.
     raw_body = _md.markdown(
