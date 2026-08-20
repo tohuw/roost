@@ -545,6 +545,102 @@ class TestMenuModel:
             server.close()
 
 
+def _attention_menu(name="huginn", *, section="s", action_id="a", label="Approve",
+                     detail="", style="attention"):
+    item = menu_spec.MenuItem(
+        label=label, action_id=action_id, detail=detail, style=style,
+    )
+    return menu_spec.BirdMenu(
+        name=name, display=name.title(),
+        spec=menu_spec.MenuSpec(sections=(
+            menu_spec.MenuSection(id=section, items=(item,)),
+        )),
+    )
+
+
+class TestAttentionState:
+    def test_only_attention_styled_items_are_kept(self):
+        model = host.MenuModel((
+            menu_spec.BirdMenu(
+                name="huginn", display="Huginn",
+                spec=menu_spec.MenuSpec(sections=(
+                    menu_spec.MenuSection(id="s", items=(
+                        menu_spec.MenuItem(label="Normal", action_id="n", style="normal"),
+                        menu_spec.MenuItem(label="Muted", action_id="m", style="muted"),
+                        menu_spec.MenuItem(label="Approve", action_id="a", style="attention"),
+                    )),
+                )),
+            ),
+        ))
+        state = host.attention_state(model)
+        assert list(state.values()) == [("Huginn", model.menus[0].spec.sections[0].items[2])]
+
+    def test_an_unavailable_bird_contributes_nothing(self):
+        model = host.MenuModel((
+            menu_spec.BirdMenu(name="huginn", display="Huginn", reason="Down."),
+        ))
+        assert host.attention_state(model) == {}
+
+    def test_a_separator_is_skipped(self):
+        model = host.MenuModel((
+            menu_spec.BirdMenu(
+                name="huginn", display="Huginn",
+                spec=menu_spec.MenuSpec(sections=(
+                    menu_spec.MenuSection(id="s", items=(
+                        menu_spec.MenuItem(separator=True, style="attention"),
+                    )),
+                )),
+            ),
+        ))
+        assert host.attention_state(model) == {}
+
+    def test_an_item_with_no_action_id_keys_on_its_label(self):
+        model = host.MenuModel((_attention_menu(action_id="", label="Needs a login"),))
+        state = host.attention_state(model)
+        assert ("huginn", "s", "Needs a login") in state
+
+
+class TestNewlyAttention:
+    def test_the_first_read_never_notifies(self):
+        """Every pre-existing attention item at startup must not fire at once."""
+        current = host.attention_state(host.MenuModel((_attention_menu(),)))
+        assert host.newly_attention(None, current) == []
+
+    def test_an_item_present_in_both_reads_does_not_notify_again(self):
+        model = host.MenuModel((_attention_menu(),))
+        state = host.attention_state(model)
+        assert host.newly_attention(state, state) == []
+
+    def test_an_item_that_just_became_attention_notifies_once(self):
+        before = host.attention_state(host.MenuModel(()))
+        after = host.attention_state(host.MenuModel((_attention_menu(),)))
+        fresh = host.newly_attention(before, after)
+        assert [display for display, _item in fresh] == ["Huginn"]
+
+    def test_a_resolved_item_is_simply_absent_next_time(self):
+        """Nothing here fires a 'resolved' toast; the item just stops appearing."""
+        before = host.attention_state(host.MenuModel((_attention_menu(),)))
+        after = host.attention_state(host.MenuModel(()))
+        assert host.newly_attention(before, after) == []
+
+    def test_two_items_that_differ_only_by_section_do_not_collide(self):
+        model = host.MenuModel((
+            menu_spec.BirdMenu(
+                name="huginn", display="Huginn",
+                spec=menu_spec.MenuSpec(sections=(
+                    menu_spec.MenuSection(id="one", items=(
+                        menu_spec.MenuItem(label="Approve", action_id="", style="attention"),
+                    )),
+                    menu_spec.MenuSection(id="two", items=(
+                        menu_spec.MenuItem(label="Approve", action_id="", style="attention"),
+                    )),
+                )),
+            ),
+        ))
+        state = host.attention_state(model)
+        assert len(state) == 2
+
+
 class TestActivate:
     def test_a_url_item_returns_a_loopback_url(self, tmp_path):
         server = _MenuBird({"sections": [

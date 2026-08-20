@@ -132,6 +132,7 @@ def _macos_menu(model):
     app.title = ""
     app._signature = None
     app._model = model
+    app._attention = None
     app._build_menu(model)
     return app
 
@@ -143,6 +144,7 @@ def _windows_menu(model):
     instance._pystray = _FakePystray
     instance._signature = None
     instance._model = model
+    instance._attention = None
     instance._state_lock = threading.RLock()
     instance._stop_event = threading.Event()
     return instance._build_menu(model)

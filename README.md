@@ -65,6 +65,10 @@ bird change its own menu with no change to Roost.
   executing anything a descriptor named: see [Lifecycle](#lifecycle-what-roost-does-and-does-not-own)
 - Renders an unreachable, stopped, or malformed bird as a **disabled section
   with a visible reason** — never as a silent omission and never as a crash
+- Fires a native toast the moment an item newly needs attention (never on
+  startup for something that already needed it, and never again for the same
+  item while it stays that way) — one signal per state change, not a repeat
+  of a live count
 - Elects exactly one host process by a single exclusive lock, released by the
   kernel if that process dies
 - Wears one mark, the bird, so the tray item stays findable

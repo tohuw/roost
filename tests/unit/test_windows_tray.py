@@ -80,6 +80,7 @@ def _tray(model=None):
     instance._pystray = _FakePystray
     instance._signature = None
     instance._model = model if model is not None else host.MenuModel()
+    instance._attention = None
     instance._state_lock = threading.RLock()
     instance._stop_event = threading.Event()
     return instance
@@ -203,6 +204,52 @@ class TestActivation:
         instance = _tray()
         instance._icon = MagicMock()
         instance._host_action(f"icon:{icons.DEFAULT_ICON}")  # must not raise
+
+
+# ── Attention toasts ─────────────────────────────────────────────────────────
+
+def _attention_menu(name="huginn", label="Approve", detail=""):
+    item = menu_spec.MenuItem(label=label, action_id="a", detail=detail, style="attention")
+    return menu_spec.BirdMenu(
+        name=name, display=name.title(),
+        spec=menu_spec.MenuSpec(sections=(
+            menu_spec.MenuSection(id="s", items=(item,)),
+        )),
+        descriptor=_descriptor(name),
+    )
+
+
+class TestAttentionToasts:
+    def test_the_first_build_establishes_a_baseline_without_notifying(self):
+        """A freshly-started tray must not open with a burst of toasts."""
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._build_menu(host.MenuModel((_attention_menu(),)))
+        instance._icon.notify.assert_not_called()
+
+    def test_an_item_that_just_became_attention_notifies_once(self):
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._build_menu(host.MenuModel(()))
+        instance._build_menu(host.MenuModel((_attention_menu(detail="stuck"),)))
+        instance._icon.notify.assert_called_once_with("Approve — stuck", title="Huginn")
+
+    def test_an_unchanged_attention_item_does_not_notify_again(self):
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._build_menu(host.MenuModel(()))
+        instance._build_menu(host.MenuModel((_attention_menu(),)))
+        instance._icon.notify.reset_mock()
+        instance._build_menu(host.MenuModel((_attention_menu(),)))
+        instance._icon.notify.assert_not_called()
+
+    def test_a_resolved_item_does_not_notify(self):
+        """The item just stops appearing; there is no separate 'resolved' toast."""
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._build_menu(host.MenuModel((_attention_menu(),)))
+        instance._build_menu(host.MenuModel(()))
+        instance._icon.notify.assert_not_called()
 
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────

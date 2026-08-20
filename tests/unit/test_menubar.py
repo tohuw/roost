@@ -105,6 +105,7 @@ def _app(model=None):
     app.title = ""
     app._signature = None
     app._model = model if model is not None else host.MenuModel()
+    app._attention = None
     return app
 
 
@@ -306,6 +307,78 @@ class TestPoll:
             lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")),
         )
         _app()._poll(None)  # must not raise
+
+
+# ── Attention toasts ─────────────────────────────────────────────────────────
+
+def _attention_menu(name="huginn", label="Approve", detail=""):
+    item = menu_spec.MenuItem(label=label, action_id="a", detail=detail, style="attention")
+    return menu_spec.BirdMenu(
+        name=name, display=name.title(),
+        spec=menu_spec.MenuSpec(sections=(
+            menu_spec.MenuSection(id="s", items=(item,)),
+        )),
+        descriptor=_descriptor(name),
+    )
+
+
+class TestAttentionToasts:
+    def test_the_first_build_establishes_a_baseline_without_notifying(self, monkeypatch):
+        """A freshly-started tray must not open with a burst of toasts."""
+        monkeypatch.setattr(
+            host, "build_model", lambda *_a, **_k: host.MenuModel((_attention_menu(),))
+        )
+        notified = []
+        monkeypatch.setattr(menubar, "notify", lambda *a: notified.append(a))
+        _app()._build_menu()
+        assert notified == []
+
+    def test_an_item_that_just_became_attention_notifies_once(self, monkeypatch):
+        notified = []
+        monkeypatch.setattr(menubar, "notify", lambda *a: notified.append(a))
+        app = _app()
+        app._build_menu(host.MenuModel(()))
+        app._build_menu(host.MenuModel((_attention_menu(detail="stuck"),)))
+        assert notified == [("Huginn", "Approve — stuck")]
+
+    def test_an_unchanged_attention_item_does_not_notify_again(self, monkeypatch):
+        notified = []
+        monkeypatch.setattr(menubar, "notify", lambda *a: notified.append(a))
+        app = _app()
+        app._build_menu(host.MenuModel(()))
+        app._build_menu(host.MenuModel((_attention_menu(),)))
+        notified.clear()
+        app._build_menu(host.MenuModel((_attention_menu(),)))
+        assert notified == []
+
+    def test_a_resolved_item_does_not_notify(self, monkeypatch):
+        """The item just stops appearing; there is no separate 'resolved' toast."""
+        notified = []
+        monkeypatch.setattr(menubar, "notify", lambda *a: notified.append(a))
+        app = _app()
+        app._build_menu(host.MenuModel((_attention_menu(),)))
+        app._build_menu(host.MenuModel(()))
+        assert notified == []
+
+
+# ── Starting a stopped bird ───────────────────────────────────────────────────
+
+class TestStartBird:
+    def test_starting_a_bird_rebuilds_the_menu_without_crashing(self, monkeypatch):
+        """RoostApp has no _refresh -- only the Windows tray does. A rebuild is
+        what keeps this in parity with it, and what starting a bird must do
+        without raising AttributeError."""
+        launch = menubar.launcher.LaunchSpec(kind="huginn", id="huginn")
+        model = host.MenuModel((
+            menu_spec.BirdMenu(name="huginn", display="Huginn",
+                               reason="Not running.", launch=launch),
+        ))
+        monkeypatch.setattr(menubar.launcher, "start", lambda _spec: (True, ""))
+        rebuilt = []
+        app = _app(model)
+        monkeypatch.setattr(app, "_build_menu", lambda *_a: rebuilt.append(1))
+        app._start_bird("huginn")
+        assert rebuilt == [1]
 
 
 # ── Notifications ─────────────────────────────────────────────────────────────

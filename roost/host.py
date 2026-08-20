@@ -344,3 +344,47 @@ def activate(menu: BirdMenu, item: menu_spec.MenuItem) -> str | None:
             sanitize.safe_for_log(exc.reason),
         )
     return None
+
+
+#: An attention-styled item at one poll, keyed by (bird name, section id,
+#: item id-or-label) rather than position -- so a menu reflow, or an
+#: unrelated item appearing earlier in the same bird, never makes an
+#: unrelated item look like it just changed.
+AttentionKey = tuple[str, str, str]
+
+
+def attention_state(model: MenuModel) -> dict[AttentionKey, tuple[str, menu_spec.MenuItem]]:
+    """Every attention-styled item currently shown, keyed stably.
+
+    A separator carries no identity and an unavailable bird contributes only a
+    reason, not items, so both are skipped. The key falls back to the item's
+    own label when it has no action id, since a purely informational
+    attention item (no action, no url) is still real and still worth a toast.
+    """
+    state: dict[AttentionKey, tuple[str, menu_spec.MenuItem]] = {}
+    for menu in model.menus:
+        if not menu.available:
+            continue
+        for section in menu.spec.sections:
+            for item in section.items:
+                if item.separator or item.style != "attention":
+                    continue
+                key = (menu.name, section.id, item.action_id or item.label)
+                state[key] = (menu.display, item)
+    return state
+
+
+def newly_attention(
+    previous: dict[AttentionKey, tuple[str, menu_spec.MenuItem]] | None,
+    current: dict[AttentionKey, tuple[str, menu_spec.MenuItem]],
+) -> list[tuple[str, menu_spec.MenuItem]]:
+    """Items that just became attention-worthy, in this poll's order.
+
+    ``previous`` is ``None`` exactly once, before any menu has ever been read.
+    That case must return nothing: every item already needing attention at
+    startup would otherwise fire a toast at once, which reads as noise rather
+    than as the signal a toast is supposed to be.
+    """
+    if previous is None:
+        return []
+    return [pair for key, pair in current.items() if key not in previous]

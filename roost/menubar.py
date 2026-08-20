@@ -202,17 +202,33 @@ class RoostApp(rumps.App):
         super().__init__("", quit_button=None, **_icon_kwargs())
         self._signature = None
         self._model = host.MenuModel()
+        # None until the first build, which must establish a baseline rather
+        # than notify -- see _notify_new_attention.
+        self._attention = None
         self._build_menu()
 
     # ── Rendering ────────────────────────────────────────────────────────────
 
     def _build_menu(self, model: "host.MenuModel | None" = None) -> None:
         self._model = model if model is not None else host.build_model()
+        self._notify_new_attention(self._model)
         rows = tray.build_rows(self._model)
         items = [self._render(row) for row in rows]
         self.menu.clear()
         self.menu.update(items)
         self._signature = tray.signature(rows)
+
+    def _notify_new_attention(self, model: "host.MenuModel") -> None:
+        """Toast every item that just became attention-worthy.
+
+        Fires nothing on the very first build (host.newly_attention's None
+        case): a freshly-started tray must not open with a burst of toasts for
+        every session that already needed attention before Roost was running.
+        """
+        current = host.attention_state(model)
+        for display, item in host.newly_attention(self._attention, current):
+            notify(display, f"{item.label} — {item.detail}" if item.detail else item.label)
+        self._attention = current
 
     def _render(self, row: tray.Row):
         """Turn one row into a rumps menu item, or None for a separator."""
@@ -278,7 +294,7 @@ class RoostApp(rumps.App):
         ok, reason = launcher.start(spec)
         if not ok:
             log.warning("Could not start %s: %s", sanitize.safe_for_log(name), reason)
-        self._refresh()
+        self._build_menu()
 
     def _apply_icon(self) -> None:
         """Re-read the configured icon and put it in the menu bar.

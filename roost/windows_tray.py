@@ -68,6 +68,9 @@ class RoostWindowsTray:
         self._state_lock = threading.RLock()
         self._signature = None
         self._model = host.MenuModel()
+        # None until the first build, which must establish a baseline rather
+        # than notify -- see _notify_new_attention.
+        self._attention = None
         self._icon = pystray.Icon(
             # The pystray name is the tray's OS-level identity on Windows. It must
             # not be "appistry": the separate internal Appistry ships its own
@@ -85,9 +88,26 @@ class RoostWindowsTray:
     def _build_menu(self, model: "host.MenuModel | None" = None):
         Menu = self._pystray.Menu
         self._model = model if model is not None else host.build_model()
+        self._notify_new_attention(self._model)
         rows = tray.build_rows(self._model)
         self._signature = tray.signature(rows)
         return Menu(*[self._render(row) for row in rows])
+
+    def _notify_new_attention(self, model: "host.MenuModel") -> None:
+        """Toast every item that just became attention-worthy.
+
+        Fires nothing on the very first build (host.newly_attention's None
+        case): a freshly-started tray must not open with a burst of toasts for
+        every session that already needed attention before Roost was running.
+        That first call also happens before ``self._icon`` exists yet -- it
+        builds the menu passed into ``pystray.Icon(...)`` -- so the empty
+        result here is what keeps this from reaching ``self._icon`` too early.
+        """
+        current = host.attention_state(model)
+        for display, item in host.newly_attention(self._attention, current):
+            message = f"{item.label} — {item.detail}" if item.detail else item.label
+            self._icon.notify(message, title=display)
+        self._attention = current
 
     def _render(self, row: tray.Row):
         Menu = self._pystray.Menu
