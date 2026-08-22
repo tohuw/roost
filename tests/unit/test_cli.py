@@ -127,7 +127,9 @@ class TestCmdBirds:
             "api_version": 1, "min_api": 1, "max_api": 1,
             "name": "muninn", "display": "Muninn", "pid": 1, "host_priority": 0,
             "transport": "unix", "address": "/tmp/muninn.sock",
-            "pages_dir": "/tmp/muninn/pages", "endpoints": {"menu": "menu"},
+            # Absolute on whichever platform is running the suite: "/tmp/x" is
+            # not absolute on Windows, and parsing refuses it for that reason.
+            "pages_dir": str(tmp_path / "pages"), "endpoints": {"menu": "menu"},
         }
         (directory / "muninn.json").write_text(json.dumps(payload), encoding="utf-8")
         monkeypatch.setattr(birds, "pid_is_alive", lambda *_a, **_k: True)

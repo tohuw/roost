@@ -8,6 +8,7 @@ proposal — that one bird's credential never reaches another bird.
 
 import http.server
 import json
+import os
 import shutil
 import socketserver
 import sys
@@ -15,6 +16,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+from itertools import count
 from multiprocessing import connection
 from pathlib import Path
 from unittest.mock import patch
@@ -511,7 +513,32 @@ class TestOpenUrl:
 # rely on real Windows CI, or a human on a Windows box, to prove the transport
 # itself -- the same caveat docs/specs/021 states for the server side.
 
-def _socket_descriptor(tmp_path, *, address, pages_dir=None, transport=birds.TRANSPORT_UNIX,
+#: The socket transport this platform actually has. Roost meets `unix` only on
+#: POSIX and `pipe` only on Windows -- a Unix domain socket is not something a
+#: Windows host will ever be handed -- so the contract below is exercised
+#: against whichever one is real here, rather than skipped on half the machines
+#: the suite runs on.
+_SOCKET_TRANSPORT = (
+    birds.TRANSPORT_PIPE if sys.platform == "win32" else birds.TRANSPORT_UNIX
+)
+
+#: The ``multiprocessing.connection`` family that goes with it.
+_LISTENER_FAMILY = "AF_PIPE" if sys.platform == "win32" else "AF_UNIX"
+
+_PIPE_SEQUENCE = count()
+
+
+def _pipe_address() -> str:
+    """A named pipe nobody else in this session is already listening on.
+
+    Pipe names are one flat machine-wide namespace, unlike socket files, so a
+    fixed name would collide between two tests -- and a Listener on a name
+    that is already live fails rather than queueing behind it.
+    """
+    return r"\\.\pipe\rst-%d-%d" % (os.getpid(), next(_PIPE_SEQUENCE))
+
+
+def _socket_descriptor(tmp_path, *, address, pages_dir=None, transport=_SOCKET_TRANSPORT,
                        **overrides):
     values = {
         "name": "muninn",
@@ -535,13 +562,17 @@ def _socket_descriptor(tmp_path, *, address, pages_dir=None, transport=birds.TRA
     return birds.BirdDescriptor(**values)
 
 
-class _UnixBird:
-    """A minimal stand-in raven speaking the unix-socket transport.
+class _SocketBird:
+    """A minimal stand-in raven speaking this platform's socket transport.
 
     One accept loop, one thread per connection, same shape as
     ``ravenserve._Server`` but with just enough behaviour for these tests: a
     fixed reply (or none, to model a hang), and a record of every request it
     was sent.
+
+    The address is the only per-platform part. A Unix domain socket is a file
+    and a named pipe is a name in the pipe namespace, so there is no directory
+    to make on Windows and no length limit to dodge there either.
     """
 
     def __init__(self, tmp_path=None, *, reply=None, hang=False, delay=0.0):
@@ -552,13 +583,22 @@ class _UnixBird:
         # uses, but not inside pytest's own scratch tree. ``tmp_path`` is
         # accepted and ignored so call sites read the same as every other
         # fixture-based server in this file.
-        self._own_dir = tempfile.mkdtemp(prefix="rst-")
-        self.address = Path(self._own_dir) / "muninn.sock"
+        self._own_dir = None
+        if sys.platform == "win32":
+            # Unique per instance: pipe names are a flat global namespace, so
+            # two tests running in the same session would otherwise collide on
+            # one name -- and a second Listener on a live name fails.
+            self.address = _pipe_address()
+        else:
+            self._own_dir = tempfile.mkdtemp(prefix="rst-")
+            self.address = Path(self._own_dir) / "muninn.sock"
         self.requests: list[dict] = []
         self._reply = {"ok": True, "body": {"sections": []}} if reply is None else reply
         self._hang = hang
         self._delay = delay
-        self._listener = connection.Listener(str(self.address), family="AF_UNIX")
+        self._listener = connection.Listener(
+            str(self.address), family=_LISTENER_FAMILY
+        )
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
@@ -593,60 +633,61 @@ class _UnixBird:
 
     def close(self):
         self._listener.close()
-        shutil.rmtree(self._own_dir, ignore_errors=True)
+        if self._own_dir is not None:
+            shutil.rmtree(self._own_dir, ignore_errors=True)
 
 
 @pytest.fixture
-def unix_bird():
-    server = _UnixBird()
+def socket_bird():
+    server = _SocketBird()
     try:
         yield server
     finally:
         server.close()
 
 
-class TestUnixSocketFetchMenu:
-    def test_returns_the_body_of_an_ok_reply(self, unix_bird, tmp_path):
-        unix_bird._reply = {"ok": True, "body": {"sections": [], "title": "Muninn"}}
-        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+class TestSocketFetchMenu:
+    def test_returns_the_body_of_an_ok_reply(self, socket_bird, tmp_path):
+        socket_bird._reply = {"ok": True, "body": {"sections": [], "title": "Muninn"}}
+        descriptor = _socket_descriptor(tmp_path, address=socket_bird.address)
         assert bird_client.fetch_menu(descriptor) == {"sections": [], "title": "Muninn"}
 
-    def test_sends_the_menu_op(self, unix_bird, tmp_path):
-        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+    def test_sends_the_menu_op(self, socket_bird, tmp_path):
+        descriptor = _socket_descriptor(tmp_path, address=socket_bird.address)
         bird_client.fetch_menu(descriptor)
-        assert unix_bird.requests[-1] == {"op": "menu"}
+        assert socket_bird.requests[-1] == {"op": "menu"}
 
-    def test_a_declared_op_name_overrides_the_default(self, unix_bird, tmp_path):
+    def test_a_declared_op_name_overrides_the_default(self, socket_bird, tmp_path):
         """``endpoints`` on this transport names ops, not paths -- SPEC.md §9a."""
         descriptor = _socket_descriptor(
-            tmp_path, address=unix_bird.address, endpoints={"menu": "list-menu"},
+            tmp_path, address=socket_bird.address, endpoints={"menu": "list-menu"},
         )
         bird_client.fetch_menu(descriptor)
-        assert unix_bird.requests[-1] == {"op": "list-menu"}
+        assert socket_bird.requests[-1] == {"op": "list-menu"}
 
-    def test_an_error_reply_raises_with_its_reason(self, unix_bird, tmp_path):
-        unix_bird._reply = {"ok": False, "error": "unknown op"}
-        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+    def test_an_error_reply_raises_with_its_reason(self, socket_bird, tmp_path):
+        socket_bird._reply = {"ok": False, "error": "unknown op"}
+        descriptor = _socket_descriptor(tmp_path, address=socket_bird.address)
         with pytest.raises(bird_client.BirdRequestError) as exc:
             bird_client.fetch_menu(descriptor)
         assert exc.value.reason == "unknown op"
 
-    def test_ok_true_with_a_non_object_body_is_refused(self, unix_bird, tmp_path):
-        unix_bird._reply = {"ok": True, "body": "not an object"}
-        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+    def test_ok_true_with_a_non_object_body_is_refused(self, socket_bird, tmp_path):
+        socket_bird._reply = {"ok": True, "body": "not an object"}
+        descriptor = _socket_descriptor(tmp_path, address=socket_bird.address)
         with pytest.raises(bird_client.BirdRequestError) as exc:
             bird_client.fetch_menu(descriptor)
         assert "not an object" in exc.value.reason
 
-    def test_a_missing_ok_key_is_treated_as_failure(self, unix_bird, tmp_path):
+    def test_a_missing_ok_key_is_treated_as_failure(self, socket_bird, tmp_path):
         """No HTTP status code exists here, so "ok" is the only success signal."""
-        unix_bird._reply = {"body": {"sections": []}}
-        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+        socket_bird._reply = {"body": {"sections": []}}
+        descriptor = _socket_descriptor(tmp_path, address=socket_bird.address)
         with pytest.raises(bird_client.BirdRequestError):
             bird_client.fetch_menu(descriptor)
 
     def test_a_hanging_bird_times_out(self, tmp_path):
-        server = _UnixBird(hang=True)
+        server = _SocketBird(hang=True)
         try:
             descriptor = _socket_descriptor(tmp_path, address=server.address)
             started = time.monotonic()
@@ -664,41 +705,41 @@ class TestUnixSocketFetchMenu:
         assert "not answering" in exc.value.reason
 
 
-class TestUnixSocketSendAction:
-    def test_posts_the_action_op_and_id(self, unix_bird, tmp_path):
-        unix_bird._reply = {"ok": True}
-        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+class TestSocketSendAction:
+    def test_posts_the_action_op_and_id(self, socket_bird, tmp_path):
+        socket_bird._reply = {"ok": True}
+        descriptor = _socket_descriptor(tmp_path, address=socket_bird.address)
         bird_client.send_action(descriptor, "quit")
-        assert unix_bird.requests[-1] == {"op": "action", "id": "quit"}
+        assert socket_bird.requests[-1] == {"op": "action", "id": "quit"}
 
-    def test_a_declared_op_name_overrides_the_default(self, unix_bird, tmp_path):
-        unix_bird._reply = {"ok": True}
+    def test_a_declared_op_name_overrides_the_default(self, socket_bird, tmp_path):
+        socket_bird._reply = {"ok": True}
         descriptor = _socket_descriptor(
-            tmp_path, address=unix_bird.address, endpoints={"action": "do"},
+            tmp_path, address=socket_bird.address, endpoints={"action": "do"},
         )
         bird_client.send_action(descriptor, "quit")
-        assert unix_bird.requests[-1] == {"op": "do", "id": "quit"}
+        assert socket_bird.requests[-1] == {"op": "do", "id": "quit"}
 
-    def test_returns_the_reply_on_success(self, unix_bird, tmp_path):
-        unix_bird._reply = {"ok": True, "restarting": True}
-        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+    def test_returns_the_reply_on_success(self, socket_bird, tmp_path):
+        socket_bird._reply = {"ok": True, "restarting": True}
+        descriptor = _socket_descriptor(tmp_path, address=socket_bird.address)
         assert bird_client.send_action(descriptor, "restart") == {
             "ok": True, "restarting": True,
         }
 
-    def test_an_error_reply_raises(self, unix_bird, tmp_path):
-        unix_bird._reply = {"ok": False, "error": "this raven publishes no actions"}
-        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+    def test_an_error_reply_raises(self, socket_bird, tmp_path):
+        socket_bird._reply = {"ok": False, "error": "this raven publishes no actions"}
+        descriptor = _socket_descriptor(tmp_path, address=socket_bird.address)
         with pytest.raises(bird_client.BirdRequestError) as exc:
             bird_client.send_action(descriptor, "quit")
         assert "publishes no actions" in exc.value.reason
 
     @pytest.mark.parametrize("bad", ["", "a\r\nb", "a\x00b", "\x1b[31m"])
-    def test_unsafe_action_ids_are_refused_before_the_wire(self, unix_bird, tmp_path, bad):
-        descriptor = _socket_descriptor(tmp_path, address=unix_bird.address)
+    def test_unsafe_action_ids_are_refused_before_the_wire(self, socket_bird, tmp_path, bad):
+        descriptor = _socket_descriptor(tmp_path, address=socket_bird.address)
         with pytest.raises(bird_client.BirdRequestError):
             bird_client.send_action(descriptor, bad)
-        assert unix_bird.requests == []
+        assert socket_bird.requests == []
 
 
 class TestPipeTransportDispatch:

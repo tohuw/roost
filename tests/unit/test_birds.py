@@ -544,9 +544,15 @@ class TestSocketTransport:
     and ``endpoints`` holding op names rather than paths.
     """
 
+    #: An absolute path on the platform running the suite. "/tmp/x" is not one
+    #: on Windows -- it names the current drive's root, which is why parsing
+    #: refuses it -- so a POSIX literal here failed a rule it was never meant
+    #: to be testing.
+    PAGES_DIR = "C:/muninn/pages" if sys.platform == "win32" else "/tmp/muninn/pages"
+
     def _socket_payload(self, **overrides):
         payload = _payload(transport="unix", address="/tmp/muninn.sock",
-                            pages_dir="/tmp/muninn/pages",
+                            pages_dir=self.PAGES_DIR,
                             endpoints={"menu": "menu"})
         del payload["port"]
         payload.update(overrides)
@@ -559,7 +565,7 @@ class TestSocketTransport:
         assert descriptor.transport == birds.TRANSPORT_UNIX
         assert descriptor.port is None
         assert descriptor.address == "/tmp/muninn.sock"
-        assert descriptor.pages_dir == Path("/tmp/muninn/pages")
+        assert descriptor.pages_dir == Path(self.PAGES_DIR)
         assert descriptor.is_socket_transport is True
         assert descriptor.endpoint("menu") == "menu"
 
@@ -635,9 +641,12 @@ class TestDescriptorDocument:
         assert parsed.api_range == (birds.MIN_API_VERSION, birds.API_VERSION)
 
     def test_a_socket_transport_document_round_trips(self, tmp_path):
+        # Absolute on the platform running the suite -- see
+        # TestSocketTransport.PAGES_DIR for why a POSIX literal is not.
+        pages = TestSocketTransport.PAGES_DIR
         document = birds.DescriptorDocument(
             name="muninn", display="Muninn", transport=birds.TRANSPORT_UNIX,
-            address="/tmp/muninn.sock", pages_dir="/tmp/muninn/pages",
+            address="/tmp/muninn.sock", pages_dir=pages,
             endpoints={"menu": "menu"},
         )
         parsed = birds.parse_descriptor(
@@ -646,7 +655,7 @@ class TestDescriptorDocument:
         assert parsed.transport == birds.TRANSPORT_UNIX
         assert parsed.port is None
         assert parsed.address == "/tmp/muninn.sock"
-        assert parsed.pages_dir == Path("/tmp/muninn/pages")
+        assert parsed.pages_dir == Path(pages)
         assert "port" not in document.to_dict()
 
     def test_optional_fields_are_omitted_when_unset(self):
