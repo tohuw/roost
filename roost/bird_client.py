@@ -471,4 +471,10 @@ def _resolve_page_url(descriptor: BirdDescriptor, path: str) -> str:
         raise BirdRequestError("Refused a link that would escape its pages directory.") from None
     if not real_candidate.is_file():
         raise BirdRequestError("Has no rendered page for that link.")
-    return f"file://{real_candidate}"
+    # as_uri() rather than an f-string: a rendered page lives wherever the bird
+    # put it, and "file://" + str(path) is only a valid URL when that path
+    # happens to contain no spaces and no drive letter. On Windows it produced
+    # "file://C:\dir\page.html" -- two slashes, so "C:" reads as the host, and
+    # backslashes a browser is not obliged to fix -- and on either platform a
+    # directory with a space in it produced a URL that stopped at the space.
+    return real_candidate.as_uri()

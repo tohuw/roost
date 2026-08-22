@@ -16,6 +16,8 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
+import urllib.request
 from itertools import count
 from multiprocessing import connection
 from pathlib import Path
@@ -813,13 +815,35 @@ class TestPagesDirContainment:
     def test_root_url_resolves_to_index_html(self, tmp_path):
         pages = self._pages(tmp_path)
         descriptor = _socket_descriptor(tmp_path, address=tmp_path / "x.sock", pages_dir=pages)
-        assert bird_client.open_url(descriptor, "/") == f"file://{pages / 'index.html'}"
+        assert bird_client.open_url(descriptor, "/") == (pages / "index.html").as_uri()
 
     def test_other_url_resolves_to_the_matching_nested_file(self, tmp_path):
         pages = self._pages(tmp_path)
         descriptor = _socket_descriptor(tmp_path, address=tmp_path / "x.sock", pages_dir=pages)
         assert bird_client.open_url(descriptor, "/session/abc123") == \
-            f"file://{pages / 'session' / 'abc123.html'}"
+            (pages / "session" / "abc123.html").as_uri()
+
+    def test_the_link_is_a_url_a_browser_can_actually_open(self, tmp_path):
+        """"file://" + str(path) is not a URL builder.
+
+        A space in the path ends the URL at the space, and on Windows a drive
+        letter after two slashes reads as the host. Both are ordinary places
+        for a bird to render its pages -- "C:/Users/Someone/App Data/pages" is
+        one string with both faults in it.
+        """
+        pages = tmp_path / "with a space"
+        pages.mkdir(parents=True)
+        (pages / "index.html").write_text("<p>index</p>", encoding="utf-8")
+        descriptor = _socket_descriptor(tmp_path, address=tmp_path / "x.sock", pages_dir=pages)
+
+        url = bird_client.open_url(descriptor, "/")
+
+        assert url.startswith("file:///")
+        assert " " not in url          # percent-encoded, not left to end the URL
+        assert "\\" not in url
+        # And it still names the file it is supposed to name.
+        opened = urllib.request.url2pathname(urllib.parse.urlparse(url).path)
+        assert Path(opened) == pages / "index.html"
 
     def test_a_url_with_no_rendered_file_is_refused(self, tmp_path):
         pages = self._pages(tmp_path)
