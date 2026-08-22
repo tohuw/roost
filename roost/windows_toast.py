@@ -40,6 +40,8 @@ from collections import OrderedDict
 from typing import Callable
 from xml.sax.saxutils import escape
 
+from roost import sanitize
+
 log = logging.getLogger(__name__)
 
 #: Roost's AppUserModelID. ``Company.Product``, the shape Windows documents, and
@@ -66,6 +68,12 @@ _MAX_LIVE = 32
 #: Windows rejects a tag longer than this, and rejects a toast whose tag it
 #: rejects -- so it is truncated here rather than discovered as a failed show.
 _MAX_TAG = 64
+
+#: How much of a message survives into the toast. Windows truncates the second
+#: line to a couple of rendered lines anyway; this bounds what is built, so a
+#: bird that publishes a very long detail cannot turn each toast into a large
+#: XML document.
+MAX_MESSAGE = 300
 
 
 def register(icon_path: str | None = None) -> bool:
@@ -109,17 +117,24 @@ def unregister() -> None:
 def toast_xml(title: str, message: str) -> str:
     """The ToastGeneric payload for one two-line toast.
 
-    Both strings are escaped. They reach here from a bird's menu, which
-    :mod:`roost.sanitize` has already stripped of control characters and escape
-    sequences -- but that pass protects a *menu*, and this one is XML: an
-    unescaped ``&`` in a worktree path is a malformed document and a toast that
-    never appears.
+    Both strings are sanitised and then escaped, in that order and for two
+    different reasons -- the same pair :func:`roost.menubar.notify` applies
+    before handing text to AppleScript. Sanitising is what removes the control
+    characters XML 1.0 has no representation for at all: one of those in a
+    label would not be *rendered* wrong, it would make the document
+    unparseable and the toast would simply never appear. Escaping is what keeps
+    an ampersand in a worktree path from doing the same thing.
+
+    A bird's menu has already been through the same sanitiser by the time it
+    reaches here. This is the boundary that must not depend on that.
     """
+    safe_title = escape(sanitize.sanitize_label(title))
+    safe_message = escape(sanitize.sanitize_label(message, MAX_MESSAGE))
     return (
         '<toast activationType="foreground">'
         '<visual><binding template="ToastGeneric">'
-        f"<text>{escape(title)}</text>"
-        f"<text>{escape(message)}</text>"
+        f"<text>{safe_title}</text>"
+        f"<text>{safe_message}</text>"
         "</binding></visual></toast>"
     )
 
