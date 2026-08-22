@@ -143,6 +143,29 @@ class TestToastXml:
         assert "<text>Huginn</text>" in xml
         assert "<text>alpha: waiting for permission</text>" in xml
 
+    def test_a_control_character_cannot_break_the_document(self):
+        """XML 1.0 has no representation for one, escaped or not.
+
+        A label carrying one does not render wrong -- it makes the payload
+        unparseable, and the toast never appears at all. The menu sanitises
+        on the way in; this is the assertion that the toast does not depend
+        on that.
+        """
+        bell, escape_byte = chr(7), chr(27)
+        noisy = f"alpha{bell}: {escape_byte}[31mwaiting"
+
+        xml = windows_toast.toast_xml("Huginn", noisy)
+
+        assert bell not in xml
+        assert escape_byte not in xml
+        # The colour sequence goes whole, rather than leaving a bare "[31m".
+        assert "<text>alpha: waiting</text>" in xml
+
+    def test_a_very_long_detail_does_not_become_a_very_long_toast(self):
+        xml = windows_toast.toast_xml("Huginn", "x" * 5000)
+
+        assert len(xml) < 1000
+
     def test_text_from_a_bird_cannot_break_the_document(self):
         """A worktree path with an ampersand in it is a real menu label."""
         xml = windows_toast.toast_xml("Huginn", "C:/work/r&d <alpha>")

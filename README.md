@@ -179,6 +179,11 @@ it starts Roost itself and does not launch or supervise birds. `uninstall`
 removes that bundle, while refusing to replace or remove an unrelated app. It is
 safe to re-run.
 
+**Updating an existing install:** re-run the `pip install -r requirements.txt`
+line above after pulling. Roost degrades rather than breaks when it is skipped,
+so the symptom is quiet — on Windows, notifications fall back to the tray
+balloon, which the notification centre does not keep and a click cannot act on.
+
 ## CLI
 
 ```
