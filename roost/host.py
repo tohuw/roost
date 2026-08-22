@@ -369,17 +369,30 @@ class AttentionItem(NamedTuple):
     item: menu_spec.MenuItem
 
 
-def attention_state(model: MenuModel) -> dict[AttentionKey, AttentionItem]:
+def attention_state(
+    model: MenuModel,
+    previous: dict[AttentionKey, AttentionItem] | None = None,
+) -> dict[AttentionKey, AttentionItem]:
     """Every attention-styled item currently shown, keyed stably.
 
-    A separator carries no identity and an unavailable bird contributes only a
-    reason, not items, so both are skipped. The key falls back to the item's
-    own label when it has no action id, since a purely informational
+    A separator carries no identity, so it is skipped. The key falls back to the
+    item's own label when it has no action id, since a purely informational
     attention item (no action, no url) is still real and still worth a toast.
+
+    An unavailable bird publishes only a reason, not items -- but silence is not
+    the same as "resolved". Its entries in ``previous`` are carried forward
+    unchanged, because a bird that timed out has told us nothing, and dropping
+    its items would make every one of them look newly attention-worthy the
+    moment it answers again: one slow menu, and the whole roster toasts twice.
+    Roost cannot fix a bird that misses its budget, but it can decline to
+    invent news out of it.
     """
     state: dict[AttentionKey, AttentionItem] = {}
     for menu in model.menus:
         if not menu.available:
+            for key, entry in (previous or {}).items():
+                if key[0] == menu.name:
+                    state[key] = entry
             continue
         for section in menu.spec.sections:
             for item in section.items:

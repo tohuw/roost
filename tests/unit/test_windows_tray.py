@@ -310,6 +310,22 @@ class TestAttentionToasts:
         instance._build_menu(host.MenuModel((_attention_menu(),)))
         assert instance._toaster.shown == []
 
+    def test_a_bird_that_times_out_does_not_re_toast_when_it_returns(self):
+        """The tray-level assertion for the same rule host.attention_state has."""
+        down = host.MenuModel((
+            menu_spec.BirdMenu(name="huginn", display="Huginn", reason="Timed out."),
+        ))
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._build_menu(host.MenuModel(()))
+        instance._build_menu(host.MenuModel((_attention_menu(),)))
+        instance._toaster.shown.clear()
+
+        instance._build_menu(down)
+        instance._build_menu(host.MenuModel((_attention_menu(),)))
+
+        assert instance._toaster.shown == []
+
     def test_a_resolved_item_does_not_notify(self):
         """The item just stops appearing; there is no separate 'resolved' toast."""
         instance = _tray()

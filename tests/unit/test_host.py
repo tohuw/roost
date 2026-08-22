@@ -583,6 +583,36 @@ class TestAttentionState:
         ))
         assert host.attention_state(model) == {}
 
+    def test_a_bird_that_went_quiet_keeps_the_items_it_last_showed(self):
+        """A timed-out bird has not said anything was resolved.
+
+        Dropping its items makes each one look new again the moment it answers,
+        which is a second toast for a state that never changed. Roost's own
+        client gives a bird two seconds, and a busy one can miss that.
+        """
+        live = host.attention_state(host.MenuModel((_attention_menu(),)))
+        down = host.MenuModel((
+            menu_spec.BirdMenu(name="huginn", display="Huginn", reason="Timed out."),
+        ))
+
+        carried = host.attention_state(down, live)
+
+        assert carried == live
+        assert host.newly_attention(live, carried) == []
+        assert host.newly_attention(carried, live) == []
+
+    def test_a_carried_item_belongs_only_to_the_bird_that_went_quiet(self):
+        live = host.attention_state(host.MenuModel((
+            _attention_menu(name="huginn"), _attention_menu(name="muninn"),
+        )))
+        partial = host.MenuModel((
+            menu_spec.BirdMenu(name="huginn", display="Huginn", reason="Timed out."),
+        ))
+
+        carried = host.attention_state(partial, live)
+
+        assert {key[0] for key in carried} == {"huginn"}
+
     def test_a_separator_is_skipped(self):
         model = host.MenuModel((
             menu_spec.BirdMenu(

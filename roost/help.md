@@ -47,6 +47,8 @@ bird adds something new, it appears here without Roost needing an update.
   notification is also kept in the notification centre, under *Roost*, for one
   that appeared while you were away; a click there still works for as long as
   Roost has been running since. On macOS the notification is a banner only.
+- **A bird that stops answering** does not clear its ● rows and does not
+  re-announce them when it comes back. Silence is not "resolved".
 - **Clicking a row** tells that bird to act on it. Rows that open a page open it
   in your browser, always against that bird's own address. If a bird offers a
   row like *Quit* or *Restart*, that is the bird acting on itself — Roost just

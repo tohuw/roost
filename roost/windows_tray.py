@@ -119,7 +119,7 @@ class RoostWindowsTray:
         do. The fallback still reaches ``self._icon``, so it stays behind the
         same first-build guard it always did.
         """
-        current = host.attention_state(model)
+        current = host.attention_state(model, self._attention)
         for entry in host.newly_attention(self._attention, current):
             message = (f"{entry.item.label} — {entry.item.detail}"
                        if entry.item.detail else entry.item.label)

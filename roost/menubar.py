@@ -225,7 +225,7 @@ class RoostApp(rumps.App):
         case): a freshly-started tray must not open with a burst of toasts for
         every session that already needed attention before Roost was running.
         """
-        current = host.attention_state(model)
+        current = host.attention_state(model, self._attention)
         for entry in host.newly_attention(self._attention, current):
             item = entry.item
             notify(entry.display,
