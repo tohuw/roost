@@ -24,9 +24,11 @@ from roost import help_server
 from roost import launcher
 from roost import host
 from roost import icons
+from roost import menu_spec
 from roost import paths
 from roost import tray
 from roost import windows_support
+from roost import windows_toast
 from roost.tray import RowKind
 
 HERE = Path(__file__).resolve().parent
@@ -71,6 +73,9 @@ class RoostWindowsTray:
         # None until the first build, which must establish a baseline rather
         # than notify -- see _notify_new_attention.
         self._attention = None
+        # Built before the icon, because constructing the icon builds the menu,
+        # and building the menu is what sends toasts.
+        self._toaster = windows_toast.Toaster(self._toast_icon())
         self._icon = pystray.Icon(
             # The pystray name is the tray's OS-level identity on Windows. It must
             # not be "appistry": the separate internal Appistry ships its own
@@ -93,6 +98,12 @@ class RoostWindowsTray:
         self._signature = tray.signature(rows)
         return Menu(*[self._render(row) for row in rows])
 
+    @staticmethod
+    def _toast_icon() -> str | None:
+        """The file the notification centre should show beside our name."""
+        choice = icons.resolve()
+        return str(choice.path) if choice is not None else None
+
     def _notify_new_attention(self, model: "host.MenuModel") -> None:
         """Toast every item that just became attention-worthy.
 
@@ -102,12 +113,36 @@ class RoostWindowsTray:
         That first call also happens before ``self._icon`` exists yet -- it
         builds the menu passed into ``pystray.Icon(...)`` -- so the empty
         result here is what keeps this from reaching ``self._icon`` too early.
+
+        A real toast is preferred and the tray icon's balloon is the fallback,
+        never both: see :mod:`roost.windows_toast` for what the balloon cannot
+        do. The fallback still reaches ``self._icon``, so it stays behind the
+        same first-build guard it always did.
         """
         current = host.attention_state(model)
-        for display, item in host.newly_attention(self._attention, current):
-            message = f"{item.label} — {item.detail}" if item.detail else item.label
-            self._icon.notify(message, title=display)
+        for entry in host.newly_attention(self._attention, current):
+            message = (f"{entry.item.label} — {entry.item.detail}"
+                       if entry.item.detail else entry.item.label)
+            if not self._toaster.show(
+                entry.display, message,
+                on_click=self._click_handler(entry),
+            ):
+                self._icon.notify(message, title=entry.display)
         self._attention = current
+
+    def _click_handler(self, entry: "host.AttentionItem"):
+        """What a click on ``entry``'s toast does: exactly what its row does.
+
+        The item is the one the toast was drawn from, and the bird is looked up
+        in the model as it stands when the click arrives -- the descriptor is
+        how the action is addressed and credentialled, so the current one is the
+        only one worth sending to. A bird that has gone away since is simply not
+        found, and the click does nothing.
+        """
+        def clicked() -> None:
+            self._act(entry.bird, entry.item)
+
+        return clicked
 
     def _render(self, row: tray.Row):
         Menu = self._pystray.Menu
@@ -164,10 +199,20 @@ class RoostWindowsTray:
     # ── Actions ──────────────────────────────────────────────────────────────
 
     def _activate(self, row: tray.Row) -> None:
-        menu = self._model.find(row.bird)
-        if menu is None or row.item is None:
+        if row.item is None:
             return
-        url = host.activate(menu, row.item)
+        self._act(row.bird, row.item)
+
+    def _act(self, bird: str, item: "menu_spec.MenuItem") -> None:
+        """Forward one item's action to the bird that published it.
+
+        Shared by the menu and by a toast, so a click reaches the same place
+        whichever surface it came from.
+        """
+        menu = self._model.find(bird)
+        if menu is None:
+            return
+        url = host.activate(menu, item)
         if url:
             webbrowser.open(url)
         self._refresh()

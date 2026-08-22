@@ -21,6 +21,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from roost import launcher
 from roost import menu_spec
@@ -353,7 +354,22 @@ def activate(menu: BirdMenu, item: menu_spec.MenuItem) -> str | None:
 AttentionKey = tuple[str, str, str]
 
 
-def attention_state(model: MenuModel) -> dict[AttentionKey, tuple[str, menu_spec.MenuItem]]:
+class AttentionItem(NamedTuple):
+    """One attention-styled item, with enough context to act on it.
+
+    ``bird`` is the name :meth:`MenuModel.find` takes and ``display`` is what to
+    call it on screen; both are here because a toast has to do both jobs. It
+    titles itself with the display name, and a click on it has to reach the same
+    :func:`activate` a click on the menu row would -- which needs the bird the
+    item came from, since the item alone does not say.
+    """
+
+    bird: str
+    display: str
+    item: menu_spec.MenuItem
+
+
+def attention_state(model: MenuModel) -> dict[AttentionKey, AttentionItem]:
     """Every attention-styled item currently shown, keyed stably.
 
     A separator carries no identity and an unavailable bird contributes only a
@@ -361,7 +377,7 @@ def attention_state(model: MenuModel) -> dict[AttentionKey, tuple[str, menu_spec
     own label when it has no action id, since a purely informational
     attention item (no action, no url) is still real and still worth a toast.
     """
-    state: dict[AttentionKey, tuple[str, menu_spec.MenuItem]] = {}
+    state: dict[AttentionKey, AttentionItem] = {}
     for menu in model.menus:
         if not menu.available:
             continue
@@ -370,14 +386,14 @@ def attention_state(model: MenuModel) -> dict[AttentionKey, tuple[str, menu_spec
                 if item.separator or item.style != "attention":
                     continue
                 key = (menu.name, section.id, item.action_id or item.label)
-                state[key] = (menu.display, item)
+                state[key] = AttentionItem(menu.name, menu.display, item)
     return state
 
 
 def newly_attention(
-    previous: dict[AttentionKey, tuple[str, menu_spec.MenuItem]] | None,
-    current: dict[AttentionKey, tuple[str, menu_spec.MenuItem]],
-) -> list[tuple[str, menu_spec.MenuItem]]:
+    previous: dict[AttentionKey, AttentionItem] | None,
+    current: dict[AttentionKey, AttentionItem],
+) -> list[AttentionItem]:
     """Items that just became attention-worthy, in this poll's order.
 
     ``previous`` is ``None`` exactly once, before any menu has ever been read.

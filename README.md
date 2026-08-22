@@ -68,7 +68,8 @@ bird change its own menu with no change to Roost.
 - Fires a native toast the moment an item newly needs attention (never on
   startup for something that already needed it, and never again for the same
   item while it stays that way) — one signal per state change, not a repeat
-  of a live count
+  of a live count. **Clicking it acts on that item**, exactly as clicking its
+  row would, and on Windows the notification centre keeps it
 - Elects exactly one host process by a single exclusive lock, released by the
   kernel if that process dies
 - Wears one mark, the bird, so the tray item stays findable

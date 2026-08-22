@@ -42,6 +42,11 @@ bird adds something new, it appears here without Roost needing an update.
   one system notification for it — never a repeat while it stays that way, and
   never a burst of them for everything that already wanted you when Roost
   started.
+- **Clicking that notification** does what clicking the row would have done, so
+  a session asking for you is one click away from the front. On Windows the
+  notification is also kept in the notification centre, under *Roost*, for one
+  that appeared while you were away; a click there still works for as long as
+  Roost has been running since. On macOS the notification is a banner only.
 - **Clicking a row** tells that bird to act on it. Rows that open a page open it
   in your browser, always against that bird's own address. If a bird offers a
   row like *Quit* or *Restart*, that is the bird acting on itself — Roost just

@@ -573,7 +573,9 @@ class TestAttentionState:
             ),
         ))
         state = host.attention_state(model)
-        assert list(state.values()) == [("Huginn", model.menus[0].spec.sections[0].items[2])]
+        assert list(state.values()) == [host.AttentionItem(
+            "huginn", "Huginn", model.menus[0].spec.sections[0].items[2],
+        )]
 
     def test_an_unavailable_bird_contributes_nothing(self):
         model = host.MenuModel((
@@ -615,7 +617,15 @@ class TestNewlyAttention:
         before = host.attention_state(host.MenuModel(()))
         after = host.attention_state(host.MenuModel((_attention_menu(),)))
         fresh = host.newly_attention(before, after)
-        assert [display for display, _item in fresh] == ["Huginn"]
+        assert [entry.display for entry in fresh] == ["Huginn"]
+
+    def test_an_entry_names_the_bird_it_came_from(self):
+        """A toast has to act on the item, and only the bird's name addresses it."""
+        after = host.attention_state(host.MenuModel((_attention_menu(name="muninn"),)))
+        entry = host.newly_attention(host.attention_state(host.MenuModel(())), after)[0]
+
+        assert (entry.bird, entry.display) == ("muninn", "Muninn")
+        assert entry.item.action_id == "a"
 
     def test_a_resolved_item_is_simply_absent_next_time(self):
         """Nothing here fires a 'resolved' toast; the item just stops appearing."""

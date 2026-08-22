@@ -114,3 +114,33 @@ def test_a_windows_descriptor_directory_resolves_under_localappdata(tmp_path, mo
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
 
     assert birds.state_dir() == tmp_path / "AppData" / "Local" / "Birds"
+
+
+def test_the_real_notification_platform_accepts_roosts_app_id():
+    """The toast path end to end, minus the toast itself.
+
+    Creating a notifier is where an unregistered application id fails, so this
+    is the assertion that :func:`windows_toast.register` writes a registration
+    Windows actually honours. Nothing is shown: a test suite that pops
+    notifications onto the running user's screen is its own bug.
+    """
+    import winreg
+
+    from roost import windows_toast
+
+    pytest.importorskip("winrt.windows.ui.notifications")
+    key_path = rf"Software\Classes\AppUserModelId\{windows_toast.APP_ID}"
+    try:
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path))
+        preexisting = True
+    except OSError:
+        preexisting = False
+
+    try:
+        toaster = windows_toast.Toaster()
+        assert toaster.available is True
+    finally:
+        # Leave the machine as it was found: on a host where Roost is installed
+        # the tray owns this key, and on one where it is not, nothing should.
+        if not preexisting:
+            windows_toast.unregister()

@@ -226,8 +226,10 @@ class RoostApp(rumps.App):
         every session that already needed attention before Roost was running.
         """
         current = host.attention_state(model)
-        for display, item in host.newly_attention(self._attention, current):
-            notify(display, f"{item.label} — {item.detail}" if item.detail else item.label)
+        for entry in host.newly_attention(self._attention, current):
+            item = entry.item
+            notify(entry.display,
+                   f"{item.label} — {item.detail}" if item.detail else item.label)
         self._attention = current
 
     def _render(self, row: tray.Row):

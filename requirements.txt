@@ -9,6 +9,13 @@ pyobjc-core<12.0;sys_platform=="darwin" and python_version<"3.10"
 pystray==0.19.5;sys_platform=="win32"
 Pillow==12.3.0;sys_platform=="win32" and python_version>="3.10"
 pywin32==312;sys_platform=="win32"
+# The Windows notification platform, for toasts the notification centre keeps
+# and clicks the tray can act on -- see roost/windows_toast.py. If they are
+# absent or fail to load, the tray falls back to the pystray balloon it used
+# before, so an install that predates these lines keeps working without them.
+winrt-runtime==3.2.1;sys_platform=="win32"
+winrt-Windows.UI.Notifications==3.2.1;sys_platform=="win32"
+winrt-Windows.Data.Xml.Dom==3.2.1;sys_platform=="win32"
 # psutil backs the PID-reuse-safe liveness check: on Windows a match on PID
 # alone is not evidence, so a descriptor's recorded start time is cross-checked
 # against the OS's own record. On POSIX it is optional — birds.pid_is_alive

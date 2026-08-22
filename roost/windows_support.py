@@ -28,6 +28,7 @@ from pathlib import Path
 
 from roost import help_server
 from roost import paths
+from roost import windows_toast
 
 _STARTUP_SHORTCUT = "Roost.lnk"
 
@@ -482,6 +483,9 @@ def uninstall_shortcuts() -> None:
     except OSError:
         log.debug("Roost Start Menu folder is not empty", exc_info=True)
     (paths.STATE_DIR / "tray-icon.ico").unlink(missing_ok=True)
+    # The notification identity the tray registers for itself. Left behind, it
+    # is a Roost entry in Settings > Notifications for a Roost that is gone.
+    windows_toast.unregister()
 
 
 # ── User PATH and environment ─────────────────────────────────────────────────

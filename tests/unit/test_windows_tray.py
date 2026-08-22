@@ -72,7 +72,31 @@ def _live_menu(name="huginn", *labels, badge=0):
     )
 
 
-def _tray(model=None):
+class _FakeToaster:
+    """Stands in for the WinRT toaster, and remembers what a click would do.
+
+    ``available`` False is the shape of a machine without the WinRT packages, or
+    with notifications turned off for Roost -- the tray has to fall back to the
+    balloon there, so both paths are worth a test.
+    """
+
+    def __init__(self, available=True):
+        self.available = available
+        self.shown = []
+
+    def show(self, title, message, *, on_click=None):
+        if not self.available:
+            return False
+        self.shown.append((title, message, on_click))
+        return True
+
+    def click(self, index=0):
+        handler = self.shown[index][2]
+        if handler is not None:
+            handler()
+
+
+def _tray(model=None, toaster=None):
     """Build the tray without pystray, PIL, or a real Windows session."""
     instance = windows_tray.RoostWindowsTray.__new__(
         windows_tray.RoostWindowsTray
@@ -81,6 +105,7 @@ def _tray(model=None):
     instance._signature = None
     instance._model = model if model is not None else host.MenuModel()
     instance._attention = None
+    instance._toaster = toaster if toaster is not None else _FakeToaster()
     instance._state_lock = threading.RLock()
     instance._stop_event = threading.Event()
     return instance
@@ -232,16 +257,58 @@ class TestAttentionToasts:
         instance._icon = MagicMock()
         instance._build_menu(host.MenuModel(()))
         instance._build_menu(host.MenuModel((_attention_menu(detail="stuck"),)))
+        assert [(title, message) for title, message, _click
+                in instance._toaster.shown] == [("Huginn", "Approve — stuck")]
+
+    def test_the_balloon_is_the_fallback_and_never_a_second_toast(self):
+        """One signal per change: a real toast, or the balloon, not both."""
+        instance = _tray(toaster=_FakeToaster(available=False))
+        instance._icon = MagicMock()
+        instance._build_menu(host.MenuModel(()))
+        instance._build_menu(host.MenuModel((_attention_menu(detail="stuck"),)))
         instance._icon.notify.assert_called_once_with("Approve — stuck", title="Huginn")
+
+    def test_a_real_toast_leaves_the_balloon_alone(self):
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._build_menu(host.MenuModel(()))
+        instance._build_menu(host.MenuModel((_attention_menu(),)))
+        instance._icon.notify.assert_not_called()
+
+    def test_clicking_a_toast_acts_on_the_item_that_raised_it(self, monkeypatch):
+        """The whole point of the toast: it goes where its menu row goes."""
+        acted = []
+        monkeypatch.setattr(host, "activate",
+                            lambda menu, item: acted.append((menu.name, item.action_id)))
+        model = host.MenuModel((_attention_menu(),))
+        # The refresh a click ends with must not go looking for real birds.
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: model)
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._build_menu(host.MenuModel(()))
+        instance._build_menu(model)
+        instance._toaster.click()
+
+        assert acted == [("huginn", "a")]
+
+    def test_clicking_a_toast_for_a_bird_that_has_gone_does_nothing(self, monkeypatch):
+        monkeypatch.setattr(host, "activate", MagicMock(side_effect=AssertionError))
+        monkeypatch.setattr(host, "build_model", lambda *_a, **_k: host.MenuModel(()))
+        instance = _tray()
+        instance._icon = MagicMock()
+        instance._build_menu(host.MenuModel(()))
+        instance._build_menu(host.MenuModel((_attention_menu(),)))
+        instance._model = host.MenuModel(())
+        instance._toaster.click()
 
     def test_an_unchanged_attention_item_does_not_notify_again(self):
         instance = _tray()
         instance._icon = MagicMock()
         instance._build_menu(host.MenuModel(()))
         instance._build_menu(host.MenuModel((_attention_menu(),)))
-        instance._icon.notify.reset_mock()
+        instance._toaster.shown.clear()
         instance._build_menu(host.MenuModel((_attention_menu(),)))
-        instance._icon.notify.assert_not_called()
+        assert instance._toaster.shown == []
 
     def test_a_resolved_item_does_not_notify(self):
         """The item just stops appearing; there is no separate 'resolved' toast."""
@@ -250,6 +317,7 @@ class TestAttentionToasts:
         instance._build_menu(host.MenuModel((_attention_menu(),)))
         instance._build_menu(host.MenuModel(()))
         instance._icon.notify.assert_not_called()
+        assert instance._toaster.shown == []
 
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────

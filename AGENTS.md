@@ -43,6 +43,7 @@ roost/host.py ── host election (the lock) + menu aggregation
 roost/tray.py ── the platform-neutral row list: WHAT the menu contains
       ├── roost/menubar.py       (macOS, rumps)
       └── roost/windows_tray.py  (Windows, pystray)
+            └── roost/windows_toast.py  (Windows, WinRT: the notification and its click)
 ```
 
 All paths below are relative to `roost/`.
@@ -57,6 +58,7 @@ All paths below are relative to `roost/`.
 | `menubar.py` | macOS rendering of those rows, plus the entry point |
 | `windows_tray.py` | Windows rendering of the same rows |
 | `windows_support.py` | Windows shortcuts, user PATH/environment, tray process |
+| `windows_toast.py` | Windows toasts: the app id Windows files them under, and the click that comes back |
 | `help_server.py` | The one loopback listener: the Help page and `/api/status` |
 | `icons.py` | The tray icon: the bird, resolved per platform |
 | `launcher.py` | Asks the OS supervisor to start a stopped bird, by identifier |
